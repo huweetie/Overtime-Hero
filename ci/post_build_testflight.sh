@@ -2,20 +2,25 @@
 set -e
 
 echo "=== Office Rumble: Post-build TestFlight Upload ==="
-WORKSPACE_DIR="$1"
-OUTPUT_DIR="$3"
+echo "Arg 1 (workspace): $1"
+echo "Arg 2 (build output): $2"
+echo "Arg 3 (platform): $3"
+echo "UNITY_PLAYER_PATH: $UNITY_PLAYER_PATH"
 
-echo "Workspace dir: $WORKSPACE_DIR"
-echo "Output dir: $OUTPUT_DIR"
-
-IPA_PATH="$OUTPUT_DIR/build.ipa"
-if [ ! -f "$IPA_PATH" ]; then
-  IPA_PATH=$(find "$OUTPUT_DIR" -name "*.ipa" | head -n 1)
+IPA_PATH=""
+if [ -n "$UNITY_PLAYER_PATH" ] && [ -f "$UNITY_PLAYER_PATH" ]; then
+  IPA_PATH="$UNITY_PLAYER_PATH"
+elif [ -n "$2" ] && [ -d "$2" ]; then
+  IPA_PATH=$(find "$2" -name "*.ipa" | head -n 1)
 fi
 
 if [ -z "$IPA_PATH" ] || [ ! -f "$IPA_PATH" ]; then
-  echo "Error: No .ipa file found in $OUTPUT_DIR"
-  ls -la "$OUTPUT_DIR"
+  # Fallback: search build directories
+  IPA_PATH=$(find /BUILD_PATH -name "*.ipa" 2>/dev/null | head -n 1)
+fi
+
+if [ -z "$IPA_PATH" ] || [ ! -f "$IPA_PATH" ]; then
+  echo "Error: No .ipa file found!"
   exit 1
 fi
 
