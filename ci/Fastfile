@@ -1,0 +1,27 @@
+# Fastfile for Office Rumble TestFlight Deployment
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Push a new beta build to TestFlight"
+  lane :beta do
+    setup_ci if ENV['CI']
+    
+    match(
+      type: "appstore",
+      app_identifier: "com.huweetie.officerumble",
+      readonly: is_ci
+    )
+    
+    build_app(
+      scheme: "Unity-iPhone",
+      workspace: "build/iOS/Unity-iPhone.xcworkspace",
+      export_method: "app-store"
+    )
+    
+    upload_to_testflight(
+      app_identifier: "com.huweetie.officerumble",
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
