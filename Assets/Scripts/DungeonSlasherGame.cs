@@ -4,6 +4,12 @@ using UnityEngine;
 
 namespace DungeonSlasher
 {
+    public enum GameLang
+    {
+        KR,
+        EN
+    }
+
     public enum GameScreen
     {
         Title,
@@ -72,7 +78,8 @@ namespace DungeonSlasher
     [Serializable]
     public class HeroMember
     {
-        public string name;
+        public string nameKr;
+        public string nameEn;
         public HeroClass hClass;
         public GameObject root;
         public Renderer spriteRend;
@@ -92,7 +99,8 @@ namespace DungeonSlasher
     public class EnemyUnit
     {
         public EnemyKind kind;
-        public string name;
+        public string nameKr;
+        public string nameEn;
         public GameObject root;
         public Renderer spriteRend;
         public Vector3 pos;
@@ -103,25 +111,23 @@ namespace DungeonSlasher
         public float attackRange;
         public float attackCooldown;
         public float cooldownTimer;
-        public float hitFlash;
         public float radius;
-        public float specialTimer;
-        public bool facingRight = false;
+        public float hitFlash;
+        public bool facingRight = true;
     }
 
     [Serializable]
     public class DungeonProp
     {
         public PropKind kind;
-        public HeroClass captiveClass;
         public GameObject root;
         public Renderer spriteRend;
         public Renderer captiveRend;
         public Vector3 pos;
         public float hp;
         public float maxHp;
+        public HeroClass captiveHero;
         public float hitFlash;
-        public float radius;
     }
 
     [Serializable]
@@ -182,9 +188,12 @@ namespace DungeonSlasher
     public class UpgradeOffer
     {
         public UpgradeId id;
-        public string title;
-        public string badge;
-        public string desc;
+        public string titleKr;
+        public string titleEn;
+        public string descKr;
+        public string descEn;
+        public string badgeKr;
+        public string badgeEn;
         public Color accent;
     }
 
@@ -196,14 +205,16 @@ namespace DungeonSlasher
         private static void Bootstrap()
         {
             if (instance != null) return;
-            GameObject go = new GameObject("DungeonSlasherManager");
+            GameObject go = new GameObject("GoinRaidGameManager");
             instance = go.AddComponent<DungeonSlasherGame>();
             DontDestroyOnLoad(go);
         }
 
-        // Core State
+        // Language & State
+        public static GameLang curLang = GameLang.KR;
         public GameScreen screen = GameScreen.Title;
         public int currentFloor = 1;
+        public int bestFloor = 1;
         public int waveIndex = 1;
         public float runTimer = 0f;
         public float spawnTimer = 0f;
@@ -217,9 +228,8 @@ namespace DungeonSlasher
         public float nextXp = 30f;
         public int runGold = 0;
         public int totalGold = 0;
-        public int bestFloor = 1;
         public int kills = 0;
-        public float ultCharge = 0f; // 0..100
+        public float ultCharge = 35f;
         public float hasteBuffTimer = 0f;
 
         // Upgrade Ranks
@@ -231,15 +241,13 @@ namespace DungeonSlasher
         public float vampiricPct = 0f;
 
         private float whirlwindTimer = 0f;
-        private float chainFireTimer = 0f;
         private float thunderTimer = 0f;
         private GameObject whirlwindOrbRoot;
 
-        // Audio & Settings
-        public bool sfxEnabled = true;
-        public bool showDmgText = true;
+        // Audio
         private AudioSource audioSrc;
-        private Dictionary<SfxId, AudioClip> sfxMap = new Dictionary<SfxId, AudioClip>();
+        private bool sfxEnabled = true;
+        private bool showDmgText = true;
 
         // Camera & Shake
         private Camera mainCam;
@@ -247,11 +255,11 @@ namespace DungeonSlasher
         private float shakePower = 0f;
         private const float ArenaHalf = 13.5f;
 
-        // Input / Floating Joystick
+        // Input / Mobile Virtual Joystick
         private bool draggingJoy = false;
-        private Vector2 joyOriginGui;
-        private Vector2 joyCurrentGui;
-        private Vector2 manualDir;
+        private Vector2 joyOriginGui = new Vector2(180f, 1080f);
+        private Vector2 joyCurrentGui = new Vector2(180f, 1080f);
+        private Vector2 manualDir = Vector2.zero;
 
         // World Containers
         private GameObject worldRoot;
@@ -297,13 +305,19 @@ namespace DungeonSlasher
         private float animClock = 0f;
         private int animFrame = 0;
 
+        private string Loc(string kr, string en)
+        {
+            return curLang == GameLang.KR ? kr : en;
+        }
+
         private void Awake()
         {
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 0;
             Time.timeScale = 1f;
-            totalGold = PlayerPrefs.GetInt("DS_TotalGold", 0);
-            bestFloor = PlayerPrefs.GetInt("DS_BestFloor", 1);
+            curLang = PlayerPrefs.GetInt("GR_Language", 0) == 0 ? GameLang.KR : GameLang.EN;
+            totalGold = PlayerPrefs.GetInt("GR_TotalGold", 0);
+            bestFloor = PlayerPrefs.GetInt("GR_BestFloor", 1);
         }
 
         private void Start()
@@ -327,7 +341,7 @@ namespace DungeonSlasher
             }
             mainCam.clearFlags = CameraClearFlags.SolidColor;
             mainCam.backgroundColor = new Color(0.06f, 0.07f, 0.11f);
-            mainCam.fieldOfView = 46f;
+            mainCam.fieldOfView = 48f;
 
             Light sun = FindAnyObjectByType<Light>();
             if (sun == null)
@@ -337,14 +351,17 @@ namespace DungeonSlasher
                 sun.type = LightType.Directional;
             }
             sun.transform.rotation = Quaternion.Euler(55f, -20f, 0f);
-            sun.color = new Color(0.85f, 0.88f, 1.0f);
-            sun.intensity = 1.05f;
+            sun.color = new Color(0.88f, 0.90f, 1.0f);
+            sun.intensity = 1.15f;
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-            RenderSettings.ambientLight = new Color(0.38f, 0.40f, 0.50f);
+            RenderSettings.ambientLight = new Color(0.42f, 0.44f, 0.54f);
         }
 
         private void LoadResourcesAndShaders()
         {
+            // Load Galmuri11 TrueType font
+            uiFont = Resources.Load<Font>("Fonts/Galmuri11");
+
             matSpriteBase = Resources.Load<Material>("Materials/DungeonSprite");
             if (matSpriteBase == null)
             {
@@ -356,16 +373,16 @@ namespace DungeonSlasher
             matSolidUnlit = Resources.Load<Material>("Materials/OfficeUnlit");
             if (matSolidUnlit == null)
             {
-                Shader sh = Shader.Find("OfficeRumble/Unlit");
-                if (sh == null) sh = Shader.Find("Universal Render Pipeline/Unlit");
+                Shader sh = Shader.Find("Universal Render Pipeline/Unlit");
+                if (sh == null) sh = Shader.Find("Unlit/Color");
                 matSolidUnlit = new Material(sh);
             }
 
             matLit = Resources.Load<Material>("Materials/OfficeLit");
             if (matLit == null)
             {
-                Shader sh = Shader.Find("OfficeRumble/Lit");
-                if (sh == null) sh = Shader.Find("Universal Render Pipeline/Lit");
+                Shader sh = Shader.Find("Universal Render Pipeline/Lit");
+                if (sh == null) sh = Shader.Find("Standard");
                 matLit = new Material(sh);
             }
 
@@ -389,7 +406,7 @@ namespace DungeonSlasher
                 if (t != null)
                 {
                     t.filterMode = FilterMode.Point;
-                    t.wrapMode = nm == "tile_floor" ? TextureWrapMode.Repeat : TextureWrapMode.Clamp;
+                    t.wrapMode = (nm == "tile_floor") ? TextureWrapMode.Repeat : TextureWrapMode.Clamp;
                     sprites[nm] = t;
                 }
             }
@@ -401,29 +418,21 @@ namespace DungeonSlasher
 
         private void BuildUiTextures()
         {
-            try
-            {
-                uiFont = Font.CreateDynamicFontFromOSFont(
-                    new string[] { "AppleSDGothicNeo-Bold", "AppleSDGothicNeo-Regular", "PingFangSC-Regular", "Arial" },
-                    24);
-            }
-            catch { uiFont = null; }
-
-            texDarkPanel = MakeBox(64, 64, new Color(0.07f, 0.09f, 0.14f, 0.92f), new Color(0.28f, 0.34f, 0.48f, 0.9f), 2);
-            texHeaderPanel = MakeBox(64, 64, new Color(0.10f, 0.12f, 0.20f, 0.96f), new Color(0.95f, 0.72f, 0.24f, 0.95f), 3);
-            texBtnGold = MakeBox(64, 64, new Color(0.86f, 0.50f, 0.12f, 1f), new Color(1f, 0.85f, 0.35f, 1f), 3);
-            texBtnDark = MakeBox(64, 64, new Color(0.16f, 0.20f, 0.28f, 0.96f), new Color(0.38f, 0.46f, 0.62f, 1f), 2);
-            texBtnAutoOn = MakeBox(64, 64, new Color(0.12f, 0.66f, 0.40f, 1f), new Color(0.45f, 1f, 0.68f, 1f), 2);
-            texBtnAutoOff = MakeBox(64, 64, new Color(0.24f, 0.26f, 0.32f, 0.95f), new Color(0.55f, 0.58f, 0.66f, 1f), 2);
-            texBarBg = MakeSolid(new Color(0.05f, 0.06f, 0.09f, 0.96f));
-            texHpGreen = MakeSolid(new Color(0.18f, 0.86f, 0.42f, 1f));
-            texHpRed = MakeSolid(new Color(0.92f, 0.24f, 0.26f, 1f));
-            texXpCyan = MakeSolid(new Color(0.22f, 0.80f, 1.0f, 1f));
-            texUltOrange = MakeSolid(new Color(1.0f, 0.62f, 0.16f, 1f));
-            texCardBg = MakeBox(64, 64, new Color(0.12f, 0.15f, 0.24f, 0.98f), new Color(0.52f, 0.72f, 1.0f, 1f), 3);
-            texJoyRing = MakeCircle(96, new Color(1f, 1f, 1f, 0.10f), new Color(0.45f, 0.85f, 1f, 0.55f), 4);
-            texJoyKnob = MakeCircle(64, new Color(0.35f, 0.82f, 1f, 0.72f), new Color(1f, 1f, 1f, 0.9f), 2);
-            texDimOverlay = MakeSolid(new Color(0f, 0f, 0f, 0.65f));
+            texDarkPanel = MakeBox(64, 64, new Color(0.08f, 0.10f, 0.16f, 0.94f), new Color(0.32f, 0.38f, 0.52f, 0.95f), 2);
+            texHeaderPanel = MakeBox(64, 64, new Color(0.12f, 0.14f, 0.22f, 0.96f), new Color(0.96f, 0.74f, 0.22f, 0.98f), 3);
+            texBtnGold = MakeBox(64, 64, new Color(0.88f, 0.52f, 0.12f, 1f), new Color(1f, 0.88f, 0.38f, 1f), 3);
+            texBtnDark = MakeBox(64, 64, new Color(0.18f, 0.22f, 0.32f, 0.96f), new Color(0.42f, 0.50f, 0.68f, 1f), 2);
+            texBtnAutoOn = MakeBox(64, 64, new Color(0.10f, 0.68f, 0.42f, 1f), new Color(0.48f, 1f, 0.72f, 1f), 2);
+            texBtnAutoOff = MakeBox(64, 64, new Color(0.24f, 0.26f, 0.34f, 0.95f), new Color(0.58f, 0.62f, 0.72f, 1f), 2);
+            texBarBg = MakeSolid(new Color(0.04f, 0.05f, 0.08f, 0.96f));
+            texHpGreen = MakeSolid(new Color(0.16f, 0.88f, 0.44f, 1f));
+            texHpRed = MakeSolid(new Color(0.94f, 0.22f, 0.24f, 1f));
+            texXpCyan = MakeSolid(new Color(0.20f, 0.82f, 1.0f, 1f));
+            texUltOrange = MakeSolid(new Color(1.0f, 0.64f, 0.16f, 1f));
+            texCardBg = MakeBox(64, 64, new Color(0.14f, 0.17f, 0.26f, 0.98f), new Color(0.55f, 0.75f, 1.0f, 1f), 3);
+            texJoyRing = MakeCircle(110, new Color(1f, 1f, 1f, 0.12f), new Color(0.45f, 0.85f, 1f, 0.65f), 4);
+            texJoyKnob = MakeCircle(64, new Color(0.35f, 0.82f, 1f, 0.82f), new Color(1f, 1f, 1f, 0.95f), 2);
+            texDimOverlay = MakeSolid(new Color(0f, 0f, 0f, 0.72f));
         }
 
         private Texture2D MakeSolid(Color c)
@@ -434,35 +443,40 @@ namespace DungeonSlasher
             return t;
         }
 
-        private Texture2D MakeBox(int w, int h, Color fill, Color border, int bw)
+        private Texture2D MakeBox(int w, int h, Color fill, Color border, int bWidth)
         {
-            Texture2D t = new Texture2D(w, h);
+            Texture2D t = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            Color[] cols = new Color[w * h];
             for (int y = 0; y < h; y++)
             {
                 for (int x = 0; x < w; x++)
                 {
-                    bool edge = x < bw || x >= w - bw || y < bw || y >= h - bw;
-                    t.SetPixel(x, y, edge ? border : fill);
+                    bool isBorder = (x < bWidth || x >= w - bWidth || y < bWidth || y >= h - bWidth);
+                    cols[y * w + x] = isBorder ? border : fill;
                 }
             }
+            t.SetPixels(cols);
             t.Apply();
             return t;
         }
 
-        private Texture2D MakeCircle(int sz, Color fill, Color ring, int rw)
+        private Texture2D MakeCircle(int size, Color fill, Color border, int bWidth)
         {
-            Texture2D t = new Texture2D(sz, sz);
-            float r = sz * 0.5f;
-            for (int y = 0; y < sz; y++)
+            Texture2D t = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            Color[] cols = new Color[size * size];
+            float r = size * 0.5f;
+            float rInner = r - bWidth;
+            for (int y = 0; y < size; y++)
             {
-                for (int x = 0; x < sz; x++)
+                for (int x = 0; x < size; x++)
                 {
                     float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(r, r));
-                    if (d > r) t.SetPixel(x, y, Color.clear);
-                    else if (d >= r - rw) t.SetPixel(x, y, ring);
-                    else t.SetPixel(x, y, fill);
+                    if (d > r) cols[y * size + x] = Color.clear;
+                    else if (d > rInner) cols[y * size + x] = border;
+                    else cols[y * size + x] = fill;
                 }
             }
+            t.SetPixels(cols);
             t.Apply();
             return t;
         }
@@ -471,53 +485,90 @@ namespace DungeonSlasher
         {
             audioSrc = gameObject.AddComponent<AudioSource>();
             audioSrc.playOnAwake = false;
-            sfxMap[SfxId.Slash] = MakeTone(360f, 140f, 0.08f, 0.18f);
-            sfxMap[SfxId.Bow] = MakeTone(780f, 420f, 0.06f, 0.14f);
-            sfxMap[SfxId.Boom] = MakeTone(180f, 55f, 0.16f, 0.24f);
-            sfxMap[SfxId.Heal] = MakeTone(520f, 880f, 0.14f, 0.15f);
-            sfxMap[SfxId.Pickup] = MakeTone(880f, 1320f, 0.07f, 0.13f);
-            sfxMap[SfxId.Rescue] = MakeTone(440f, 990f, 0.25f, 0.22f);
-            sfxMap[SfxId.LevelUp] = MakeTone(523f, 1046f, 0.30f, 0.25f);
-            sfxMap[SfxId.Hurt] = MakeTone(150f, 80f, 0.09f, 0.20f);
-            sfxMap[SfxId.Victory] = MakeTone(587f, 1174f, 0.42f, 0.26f);
         }
 
-        private AudioClip MakeTone(float fStart, float fEnd, float dur, float vol)
-        {
-            int sr = 22050;
-            int n = Mathf.Max(1, (int)(sr * dur));
-            float[] data = new float[n];
-            float phase = 0f;
-            for (int i = 0; i < n; i++)
-            {
-                float t = (float)i / n;
-                float freq = Mathf.Lerp(fStart, fEnd, t);
-                phase += 2f * Mathf.PI * freq / sr;
-                float env = 1f - t;
-                data[i] = Mathf.Sign(Mathf.Sin(phase)) * vol * env * 0.65f;
-            }
-            AudioClip clip = AudioClip.Create("sfx", n, 1, sr, false);
-            clip.SetData(data, 0);
-            return clip;
-        }
-
-        private void PlaySfx(SfxId id)
+        private void PlaySfx(SfxId sfx)
         {
             if (!sfxEnabled || audioSrc == null) return;
-            if (sfxMap.TryGetValue(id, out AudioClip c) && c != null)
+            AudioClip clip = CreateSynthSfx(sfx);
+            if (clip != null) audioSrc.PlayOneShot(clip, 0.72f);
+        }
+
+        private AudioClip CreateSynthSfx(SfxId sfx)
+        {
+            int rate = 22050;
+            float len = 0.14f;
+            switch (sfx)
             {
-                audioSrc.PlayOneShot(c);
+                case SfxId.Slash: len = 0.12f; break;
+                case SfxId.Bow: len = 0.10f; break;
+                case SfxId.Boom: len = 0.28f; break;
+                case SfxId.Heal: len = 0.24f; break;
+                case SfxId.Pickup: len = 0.10f; break;
+                case SfxId.Rescue: len = 0.35f; break;
+                case SfxId.LevelUp: len = 0.42f; break;
+                case SfxId.Hurt: len = 0.16f; break;
+                case SfxId.Victory: len = 0.55f; break;
             }
+
+            int count = (int)(rate * len);
+            float[] samples = new float[count];
+            for (int i = 0; i < count; i++)
+            {
+                float t = (float)i / rate;
+                float env = 1f - (float)i / count;
+                float freq = 440f;
+                float val = 0f;
+
+                switch (sfx)
+                {
+                    case SfxId.Slash:
+                        freq = Mathf.Lerp(800f, 180f, t / len);
+                        val = (Mathf.Sin(2 * Mathf.PI * freq * t) > 0f ? 0.35f : -0.35f) * env;
+                        break;
+                    case SfxId.Bow:
+                        freq = Mathf.Lerp(420f, 750f, t / len);
+                        val = Mathf.Sin(2 * Mathf.PI * freq * t) * env;
+                        break;
+                    case SfxId.Boom:
+                        val = (UnityEngine.Random.value * 2f - 1f) * env * 0.65f;
+                        break;
+                    case SfxId.Heal:
+                        freq = 520f + Mathf.Sin(t * 35f) * 120f;
+                        val = Mathf.Sin(2 * Mathf.PI * freq * t) * env * 0.45f;
+                        break;
+                    case SfxId.Pickup:
+                        freq = Mathf.Lerp(580f, 1120f, t / len);
+                        val = Mathf.Sin(2 * Mathf.PI * freq * t) * env;
+                        break;
+                    case SfxId.Rescue:
+                    case SfxId.LevelUp:
+                        freq = (t < len * 0.33f) ? 523.25f : ((t < len * 0.66f) ? 659.25f : 783.99f);
+                        val = (Mathf.Sin(2 * Mathf.PI * freq * t) > 0f ? 0.3f : -0.3f) * env;
+                        break;
+                    case SfxId.Hurt:
+                        freq = Mathf.Lerp(220f, 80f, t / len);
+                        val = (Mathf.Sin(2 * Mathf.PI * freq * t) > 0f ? 0.4f : -0.4f) * env;
+                        break;
+                    case SfxId.Victory:
+                        freq = (t < len * 0.25f) ? 523f : ((t < len * 0.5f) ? 659f : ((t < len * 0.75f) ? 784f : 1046f));
+                        val = Mathf.Sin(2 * Mathf.PI * freq * t) * env * 0.45f;
+                        break;
+                }
+                samples[i] = Mathf.Clamp(val, -1f, 1f);
+            }
+
+            AudioClip c = AudioClip.Create("sfx_" + sfx, count, 1, rate, false);
+            c.SetData(samples, 0);
+            return c;
         }
 
         private void BuildDungeonArena()
         {
             if (worldRoot != null) Destroy(worldRoot);
-            worldRoot = new GameObject("DungeonWorld");
+            worldRoot = new GameObject("DungeonWorldRoot");
             entitiesRoot = new GameObject("DungeonEntities");
             entitiesRoot.transform.SetParent(worldRoot.transform);
-            pillarPositions.Clear();
-            torchLights.Clear();
 
             // Tiled Cobblestone Floor
             GameObject floor = new GameObject("DungeonFloor");
@@ -529,63 +580,71 @@ namespace DungeonSlasher
             MeshRenderer fr = floor.AddComponent<MeshRenderer>();
             Material fMat = new Material(matSpriteBase);
             if (sprites.ContainsKey("tile_floor")) fMat.SetTexture("_MainTex", sprites["tile_floor"]);
-            fMat.SetTextureScale("_MainTex", new Vector2(13f, 13f));
-            fMat.SetColor("_BaseColor", new Color(0.88f, 0.90f, 0.96f, 1f));
+            fMat.SetTextureScale("_MainTex", new Vector2(14f, 14f));
             fr.sharedMaterial = fMat;
 
             // Surrounding Stone Dungeon Walls
-            Material wallMat = MakeSolidMat(new Color(0.18f, 0.20f, 0.27f));
-            Material trimMat = MakeSolidMat(new Color(0.28f, 0.31f, 0.40f));
+            Material wallMat = MakeSolidMat(new Color(0.18f, 0.20f, 0.28f));
+            Material trimMat = MakeSolidMat(new Color(0.28f, 0.32f, 0.42f));
             float wDist = ArenaHalf + 0.8f;
-            CreateBox(worldRoot.transform, new Vector3(0, 1.0f, wDist), new Vector3(ArenaHalf * 2.2f + 2f, 2.2f, 1.4f), wallMat);
-            CreateBox(worldRoot.transform, new Vector3(0, 1.0f, -wDist), new Vector3(ArenaHalf * 2.2f + 2f, 2.2f, 1.4f), wallMat);
-            CreateBox(worldRoot.transform, new Vector3(-wDist, 1.0f, 0), new Vector3(1.4f, 2.2f, ArenaHalf * 2.2f + 2f), wallMat);
-            CreateBox(worldRoot.transform, new Vector3(wDist, 1.0f, 0), new Vector3(1.4f, 2.2f, ArenaHalf * 2.2f + 2f), wallMat);
+            CreateBox(worldRoot.transform, new Vector3(0, 1.2f, wDist), new Vector3(ArenaHalf * 2.2f + 2f, 2.4f, 1.4f), wallMat);
+            CreateBox(worldRoot.transform, new Vector3(0, 1.2f, -wDist), new Vector3(ArenaHalf * 2.2f + 2f, 2.4f, 1.4f), wallMat);
+            CreateBox(worldRoot.transform, new Vector3(-wDist, 1.2f, 0), new Vector3(1.4f, 2.4f, ArenaHalf * 2.2f + 2f), wallMat);
+            CreateBox(worldRoot.transform, new Vector3(wDist, 1.2f, 0), new Vector3(1.4f, 2.4f, ArenaHalf * 2.2f + 2f), wallMat);
 
-            // 8 Wall Torches with Warm Flickering Point Lights
-            Material torchFlameMat = MakeSolidMat(new Color(1.0f, 0.58f, 0.14f));
+            // Wall Torches with Warm Flickering Lights
+            Material torchFlameMat = MakeSolidMat(new Color(1.0f, 0.60f, 0.16f));
             Vector3[] torchCoords = {
                 new Vector3(-7f, 1.6f, wDist - 0.8f), new Vector3(7f, 1.6f, wDist - 0.8f),
                 new Vector3(-7f, 1.6f, -wDist + 0.8f), new Vector3(7f, 1.6f, -wDist + 0.8f),
-                new Vector3(-wDist + 0.8f, 1.6f, 6f), new Vector3(-wDist + 0.8f, 1.6f, -6f),
-                new Vector3(wDist - 0.8f, 1.6f, 6f), new Vector3(wDist - 0.8f, 1.6f, -6f)
+                new Vector3(-wDist + 0.8f, 1.6f, -7f), new Vector3(-wDist + 0.8f, 1.6f, 7f),
+                new Vector3(wDist - 0.8f, 1.6f, -7f), new Vector3(wDist - 0.8f, 1.6f, 7f)
             };
-            foreach (Vector3 tp in torchCoords)
+            torchLights.Clear();
+            foreach (Vector3 tc in torchCoords)
             {
-                GameObject flame = CreateBox(worldRoot.transform, tp, new Vector3(0.32f, 0.48f, 0.32f), torchFlameMat);
-                Light pt = flame.AddComponent<Light>();
-                pt.type = LightType.Point;
-                pt.color = new Color(1.0f, 0.62f, 0.25f);
-                pt.range = 8.5f;
-                pt.intensity = 1.6f;
-                torchLights.Add(pt);
+                GameObject torch = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                Collider c = torch.GetComponent<Collider>(); if (c != null) Destroy(c);
+                torch.transform.SetParent(worldRoot.transform);
+                torch.transform.position = tc;
+                torch.transform.localScale = Vector3.one * 0.42f;
+                torch.GetComponent<Renderer>().sharedMaterial = torchFlameMat;
+
+                GameObject lt = new GameObject("TorchLight");
+                lt.transform.SetParent(torch.transform);
+                lt.transform.localPosition = Vector3.zero;
+                Light l = lt.AddComponent<Light>();
+                l.type = LightType.Point;
+                l.color = new Color(1.0f, 0.65f, 0.22f);
+                l.range = 8.5f;
+                l.intensity = 1.65f;
+                torchLights.Add(l);
             }
 
-            // 4 Stone Pillars (Tactical Cover & Visual Richness)
+            // Dungeon Stone Pillars
+            pillarPositions.Clear();
             Vector3[] pillars = {
-                new Vector3(-6.2f, 0f, 6.2f), new Vector3(6.2f, 0f, 6.2f),
-                new Vector3(-6.2f, 0f, -6.2f), new Vector3(6.2f, 0f, -6.2f)
+                new Vector3(-6.5f, 0, -6.5f), new Vector3(6.5f, 0, -6.5f),
+                new Vector3(-6.5f, 0, 6.5f), new Vector3(6.5f, 0, 6.5f)
             };
-            Material runeMat = MakeSolidMat(new Color(0.25f, 0.72f, 1.0f));
-            foreach (Vector3 pp in pillars)
+            foreach (Vector3 p in pillars)
             {
-                CreateBox(worldRoot.transform, pp + Vector3.up * 0.9f, new Vector3(1.25f, 1.8f, 1.25f), wallMat);
-                CreateBox(worldRoot.transform, pp + Vector3.up * 1.85f, new Vector3(1.45f, 0.22f, 1.45f), trimMat);
-                CreateBox(worldRoot.transform, pp + Vector3.up * 1.1f, new Vector3(1.32f, 0.16f, 1.32f), runeMat);
-                pillarPositions.Add(pp);
+                pillarPositions.Add(p);
+                CreateBox(worldRoot.transform, p + Vector3.up * 1.5f, new Vector3(1.3f, 3.0f, 1.3f), wallMat);
+                CreateBox(worldRoot.transform, p + Vector3.up * 3.1f, new Vector3(1.6f, 0.4f, 1.6f), trimMat);
+                CreateBox(worldRoot.transform, p + Vector3.up * 0.15f, new Vector3(1.6f, 0.3f, 1.6f), trimMat);
             }
         }
 
         private GameObject CreateBox(Transform parent, Vector3 pos, Vector3 scale, Material mat)
         {
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Collider col = go.GetComponent<Collider>();
-            if (col != null) Destroy(col);
-            go.transform.SetParent(parent);
-            go.transform.position = pos;
-            go.transform.localScale = scale;
-            go.GetComponent<Renderer>().sharedMaterial = mat;
-            return go;
+            GameObject b = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Collider c = b.GetComponent<Collider>(); if (c != null) Destroy(c);
+            b.transform.SetParent(parent);
+            b.transform.position = pos;
+            b.transform.localScale = scale;
+            b.GetComponent<Renderer>().sharedMaterial = mat;
+            return b;
         }
 
         private Material MakeSolidMat(Color c)
@@ -635,9 +694,13 @@ namespace DungeonSlasher
 
         private void ClearEntities()
         {
-            if (entitiesRoot != null) Destroy(entitiesRoot);
-            entitiesRoot = new GameObject("DungeonEntities");
-            entitiesRoot.transform.SetParent(worldRoot.transform);
+            if (entitiesRoot != null)
+            {
+                foreach (Transform child in entitiesRoot.transform)
+                {
+                    Destroy(child.gameObject);
+                }
+            }
             heroes.Clear();
             enemies.Clear();
             props.Clear();
@@ -677,7 +740,7 @@ namespace DungeonSlasher
             nextXp = 25f;
             runGold = 0;
             kills = 0;
-            ultCharge = 35f;
+            ultCharge = 40f;
             hasteBuffTimer = 0f;
 
             rankWhirlwind = 0;
@@ -687,26 +750,26 @@ namespace DungeonSlasher
             multDamage = 1f;
             vampiricPct = 0f;
 
-            // Start with Knight + Archer duo (instant 우르릉 feel!)
-            SpawnHero(HeroClass.Knight, new Vector3(0f, 0f, -2f));
-            SpawnHero(HeroClass.Archer, new Vector3(-1.3f, 0f, -3.2f));
+            // Start with Knight + Archer duo (instant 우르릉 squad feel!)
+            SpawnHero(HeroClass.Knight, new Vector3(0f, 0f, -1.5f));
+            SpawnHero(HeroClass.Archer, new Vector3(-1.2f, 0f, -2.8f));
 
             // Initial Dungeon Props: 2 Prison Cages + 3 Chests + Crates
-            SpawnProp(PropKind.Cage, new Vector3(-8.5f, 0f, 3.0f), HeroClass.Mage);
-            SpawnProp(PropKind.Cage, new Vector3(8.5f, 0f, 5.5f), HeroClass.Priest);
-            SpawnProp(PropKind.Chest, new Vector3(-3.5f, 0f, 8.5f), HeroClass.Knight);
-            SpawnProp(PropKind.Chest, new Vector3(4.0f, 0f, -8.5f), HeroClass.Knight);
-            SpawnProp(PropKind.Crate, new Vector3(2.5f, 0f, 2.5f), HeroClass.Knight);
-            SpawnProp(PropKind.Crate, new Vector3(-2.8f, 0f, -5.5f), HeroClass.Knight);
+            SpawnProp(PropKind.Cage, new Vector3(-6.5f, 0f, 3.0f), HeroClass.Mage);
+            SpawnProp(PropKind.Cage, new Vector3(6.5f, 0f, 4.5f), HeroClass.Priest);
+            SpawnProp(PropKind.Chest, new Vector3(-3.2f, 0f, 7.5f), HeroClass.Knight);
+            SpawnProp(PropKind.Chest, new Vector3(3.5f, 0f, -7.0f), HeroClass.Knight);
+            SpawnProp(PropKind.Crate, new Vector3(1.8f, 0f, 2.0f), HeroClass.Knight);
+            SpawnProp(PropKind.Crate, new Vector3(-2.2f, 0f, -4.5f), HeroClass.Knight);
 
             // Initial Wave
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 5; i++)
             {
-                SpawnEnemyNearEdge(i < 4 ? EnemyKind.Slime : EnemyKind.Goblin);
+                SpawnEnemyNearEdge(i < 3 ? EnemyKind.Slime : EnemyKind.Goblin);
             }
 
             screen = GameScreen.Playing;
-            AddFloatText(Vector3.zero + Vector3.up * 2f, "제 " + currentFloor + "층 탐험 시작!", new Color(1f, 0.86f, 0.25f), true);
+            AddFloatText(Vector3.zero + Vector3.up * 2f, Loc("제 " + currentFloor + "층 레이드 시작!", "FLOOR " + currentFloor + " RAID START!"), new Color(1f, 0.88f, 0.25f), true);
             PlaySfx(SfxId.Rescue);
         }
 
@@ -717,32 +780,36 @@ namespace DungeonSlasher
             switch (hc)
             {
                 case HeroClass.Knight:
-                    h.name = "기사 아서";
-                    h.maxHp = 260f * scaleMult;
-                    h.attackDamage = 32f;
-                    h.attackRange = 2.3f;
-                    h.attackCooldown = 0.72f;
+                    h.nameKr = "기사 아서";
+                    h.nameEn = "Knight Arthur";
+                    h.maxHp = 280f * scaleMult;
+                    h.attackDamage = 35f;
+                    h.attackRange = 2.4f;
+                    h.attackCooldown = 0.68f;
                     break;
                 case HeroClass.Archer:
-                    h.name = "궁수 레나";
-                    h.maxHp = 165f * scaleMult;
-                    h.attackDamage = 24f;
-                    h.attackRange = 8.0f;
-                    h.attackCooldown = 0.55f;
+                    h.nameKr = "궁수 레나";
+                    h.nameEn = "Archer Lena";
+                    h.maxHp = 180f * scaleMult;
+                    h.attackDamage = 26f;
+                    h.attackRange = 8.5f;
+                    h.attackCooldown = 0.52f;
                     break;
                 case HeroClass.Mage:
-                    h.name = "마법사 루나";
-                    h.maxHp = 155f * scaleMult;
-                    h.attackDamage = 42f;
-                    h.attackRange = 7.2f;
-                    h.attackCooldown = 1.05f;
+                    h.nameKr = "마법사 루나";
+                    h.nameEn = "Mage Luna";
+                    h.maxHp = 165f * scaleMult;
+                    h.attackDamage = 45f;
+                    h.attackRange = 7.5f;
+                    h.attackCooldown = 0.95f;
                     break;
                 case HeroClass.Priest:
-                    h.name = "사제 세라";
-                    h.maxHp = 185f * scaleMult;
-                    h.attackDamage = 22f;
-                    h.attackRange = 6.5f;
-                    h.attackCooldown = 1.15f;
+                    h.nameKr = "사제 세라";
+                    h.nameEn = "Priestess Sera";
+                    h.maxHp = 195f * scaleMult;
+                    h.attackDamage = 24f;
+                    h.attackRange = 6.8f;
+                    h.attackCooldown = 1.10f;
                     break;
             }
             h.hp = h.maxHp;
@@ -771,13 +838,13 @@ namespace DungeonSlasher
             for (int tries = 0; tries < 10; tries++)
             {
                 float ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
-                float dist = UnityEngine.Random.Range(7.5f, 12.0f);
+                float dist = UnityEngine.Random.Range(6.5f, 11.0f);
                 p = new Vector3(
                     Mathf.Clamp(leader.x + Mathf.Cos(ang) * dist, -ArenaHalf + 1.5f, ArenaHalf - 1.5f),
                     0f,
                     Mathf.Clamp(leader.z + Mathf.Sin(ang) * dist, -ArenaHalf + 1.5f, ArenaHalf - 1.5f)
                 );
-                if (Vector3.Distance(p, leader) > 6.0f) break;
+                if (Vector3.Distance(p, leader) > 5.0f) break;
             }
             SpawnEnemy(kind, p);
         }
@@ -790,30 +857,29 @@ namespace DungeonSlasher
             switch (kind)
             {
                 case EnemyKind.Slime:
-                    e.name = "초록 슬라임"; e.maxHp = 48f * fm; e.speed = 2.6f; e.damage = 9f * fm;
-                    e.attackRange = 1.35f; e.attackCooldown = 1.0f; e.radius = 0.6f;
+                    e.nameKr = "초록 슬라임"; e.nameEn = "Green Slime"; e.maxHp = 45f * fm; e.speed = 2.8f; e.damage = 9f * fm;
+                    e.attackRange = 1.35f; e.attackCooldown = 0.95f; e.radius = 0.6f;
                     break;
                 case EnemyKind.Goblin:
-                    e.name = "고블린 창병"; e.maxHp = 78f * fm; e.speed = 3.5f; e.damage = 13f * fm;
-                    e.attackRange = 1.55f; e.attackCooldown = 0.85f; e.radius = 0.65f;
+                    e.nameKr = "고블린 자객"; e.nameEn = "Goblin Assassin"; e.maxHp = 65f * fm; e.speed = 3.6f; e.damage = 14f * fm;
+                    e.attackRange = 1.4f; e.attackCooldown = 0.75f; e.radius = 0.65f;
                     break;
                 case EnemyKind.Skeleton:
-                    e.name = "해골 궁수"; e.maxHp = 65f * fm; e.speed = 2.4f; e.damage = 15f * fm;
-                    e.attackRange = 7.5f; e.attackCooldown = 1.65f; e.radius = 0.65f;
+                    e.nameKr = "해골 궁수"; e.nameEn = "Skeleton Archer"; e.maxHp = 55f * fm; e.speed = 2.4f; e.damage = 16f * fm;
+                    e.attackRange = 7.5f; e.attackCooldown = 1.35f; e.radius = 0.65f;
                     break;
                 case EnemyKind.Orc:
-                    e.name = "오크 광전사"; e.maxHp = 210f * fm; e.speed = 2.2f; e.damage = 24f * fm;
-                    e.attackRange = 1.85f; e.attackCooldown = 1.15f; e.radius = 0.85f;
-                    size = 1.75f;
+                    e.nameKr = "오크 광전사"; e.nameEn = "Orc Berserker"; e.maxHp = 135f * fm; e.speed = 2.2f; e.damage = 25f * fm;
+                    e.attackRange = 1.8f; e.attackCooldown = 1.25f; e.radius = 0.95f; size = 1.75f;
                     break;
                 case EnemyKind.Boss:
-                    e.name = "심연의 마왕 발록"; e.maxHp = 1650f * fm; e.speed = 2.35f; e.damage = 34f * fm;
-                    e.attackRange = 2.5f; e.attackCooldown = 1.25f; e.radius = 1.3f; e.specialTimer = 3.2f;
-                    size = 2.85f;
+                    e.nameKr = "심연의 마왕 발록"; e.nameEn = "Abyss Lord Balrog"; e.maxHp = 1100f * fm; e.speed = 1.9f; e.damage = 38f * fm;
+                    e.attackRange = 3.2f; e.attackCooldown = 1.4f; e.radius = 1.8f; size = 2.6f;
                     break;
             }
             e.hp = e.maxHp;
-            e.root = CreateBillboard(GetEnemySpriteKey(kind, 0), pos, size, out e.spriteRend);
+            string key = GetEnemySpriteKey(kind, 0);
+            e.root = CreateBillboard(key, pos, size, out e.spriteRend);
             enemies.Add(e);
         }
 
@@ -832,15 +898,15 @@ namespace DungeonSlasher
 
         private void SpawnProp(PropKind kind, Vector3 pos, HeroClass captive)
         {
-            DungeonProp p = new DungeonProp { kind = kind, pos = pos, captiveClass = captive, radius = 0.9f };
-            string key = kind == PropKind.Cage ? "prop_cage" : (kind == PropKind.Chest ? "prop_chest" : "prop_crate");
-            p.maxHp = kind == PropKind.Cage ? 140f : (kind == PropKind.Chest ? 110f : 55f);
+            DungeonProp p = new DungeonProp { kind = kind, pos = pos, captiveHero = captive };
+            float size = (kind == PropKind.Cage) ? 1.75f : 1.35f;
+            string key = (kind == PropKind.Cage) ? "prop_cage" : (kind == PropKind.Chest ? "prop_chest" : "prop_crate");
+            p.maxHp = (kind == PropKind.Cage) ? 120f : (kind == PropKind.Chest ? 80f : 50f);
             p.hp = p.maxHp;
-            p.root = CreateBillboard(key, pos, kind == PropKind.Crate ? 1.2f : 1.65f, out p.spriteRend);
+            p.root = CreateBillboard(key, pos, size, out p.spriteRend);
 
             if (kind == PropKind.Cage)
             {
-                // Show tiny trapped hero preview slightly behind cage bars
                 GameObject cap = new GameObject("Captive");
                 cap.transform.SetParent(p.root.transform);
                 cap.transform.localPosition = new Vector3(0f, 0.65f, 0.14f);
@@ -882,11 +948,7 @@ namespace DungeonSlasher
                 return;
             }
 
-            if (screen != GameScreen.Playing)
-            {
-                UpdateCamera(dt);
-                return;
-            }
+            if (screen != GameScreen.Playing) return;
 
             runTimer += dt;
             if (hasteBuffTimer > 0f) hasteBuffTimer -= dt;
@@ -914,7 +976,8 @@ namespace DungeonSlasher
                 Vector3 target = new Vector3(Mathf.Cos(a) * 2.2f, 0f, Mathf.Sin(a) * 1.5f);
                 heroes[i].facingRight = target.x >= heroes[i].pos.x;
                 heroes[i].pos = Vector3.Lerp(heroes[i].pos, target, dt * 3f);
-                heroes[i].root.transform.position = heroes[i].pos + Vector3.up * Mathf.Abs(Mathf.Sin(Time.time * 6f + i)) * 0.12f;
+                if (heroes[i].root != null)
+                    heroes[i].root.transform.position = heroes[i].pos + Vector3.up * Mathf.Abs(Mathf.Sin(Time.time * 6f + i)) * 0.12f;
             }
             UpdateSpriteAnimations();
             if (mainCam != null)
@@ -929,30 +992,49 @@ namespace DungeonSlasher
             float rx = Screen.width / 750f;
             float ry = Screen.height / 1334f;
 
-            if (Input.GetMouseButtonDown(0))
+            Vector2 screenPos = Vector2.zero;
+            bool isDown = false;
+            bool isHeld = false;
+            bool isUp = false;
+
+            if (Input.touchCount > 0)
             {
-                Vector2 gPos = new Vector2(Input.mousePosition.x / rx, (Screen.height - Input.mousePosition.y) / ry);
-                // Ignore top HUD & bottom-right Ult button
-                bool inTopHud = gPos.y < 185f;
-                bool inUltBtn = gPos.x > 550f && gPos.y > 1060f;
-                if (!inTopHud && !inUltBtn)
-                {
-                    draggingJoy = true;
-                    joyOriginGui = gPos;
-                    joyCurrentGui = gPos;
-                    manualDir = Vector2.zero;
-                }
+                Touch t = Input.GetTouch(0);
+                screenPos = t.position;
+                if (t.phase == TouchPhase.Began) isDown = true;
+                else if (t.phase == TouchPhase.Moved || t.phase == TouchPhase.Stationary) isHeld = true;
+                else if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) isUp = true;
             }
-            else if (Input.GetMouseButton(0) && draggingJoy)
+            else
             {
-                joyCurrentGui = new Vector2(Input.mousePosition.x / rx, (Screen.height - Input.mousePosition.y) / ry);
-                Vector2 delta = joyCurrentGui - joyOriginGui;
-                float maxR = 85f;
+                screenPos = Input.mousePosition;
+                if (Input.GetMouseButtonDown(0)) isDown = true;
+                else if (Input.GetMouseButton(0)) isHeld = true;
+                else if (Input.GetMouseButtonUp(0)) isUp = true;
+            }
+
+            Vector2 gPos = new Vector2(screenPos.x / rx, (Screen.height - screenPos.y) / ry);
+
+            // Exclude top HUD buttons and bottom Ultimate button
+            bool inTopHud = gPos.y < 180f;
+            bool inUltBtn = gPos.x > 530f && gPos.y > 1160f;
+
+            if (isDown && !inTopHud && !inUltBtn)
+            {
+                draggingJoy = true;
+                joyOriginGui = gPos;
+                joyCurrentGui = gPos;
+                manualDir = Vector2.zero;
+            }
+            else if (isHeld && draggingJoy)
+            {
+                Vector2 delta = gPos - joyOriginGui;
+                float maxR = 90f;
                 if (delta.magnitude > maxR) delta = delta.normalized * maxR;
                 joyCurrentGui = joyOriginGui + delta;
-                manualDir = delta.magnitude > 10f ? delta / maxR : Vector2.zero;
+                manualDir = delta.magnitude > 12f ? (delta / maxR) : Vector2.zero;
             }
-            else if (Input.GetMouseButtonUp(0))
+            else if (isUp)
             {
                 draggingJoy = false;
                 manualDir = Vector2.zero;
@@ -961,33 +1043,33 @@ namespace DungeonSlasher
 
         private void UpdateWavesAndSpawning(float dt)
         {
-            if (runTimer < 26f) waveIndex = 1;
-            else if (runTimer < 58f) waveIndex = 2;
+            if (runTimer < 25f) waveIndex = 1;
+            else if (runTimer < 55f) waveIndex = 2;
             else waveIndex = 3;
 
             if (waveIndex == 3 && !bossSpawned)
             {
                 bossSpawned = true;
                 SpawnEnemyNearEdge(EnemyKind.Boss);
-                SpawnProp(PropKind.Cage, new Vector3(0f, 0f, 7.5f), heroes.Count < 4 ? HeroClass.Mage : HeroClass.Knight);
-                SpawnProp(PropKind.Chest, new Vector3(-6.5f, 0f, -6.5f), HeroClass.Knight);
-                AddFloatText(heroes[0].pos + Vector3.up * 2.5f, "경고! 심연의 마왕 발록 등장!", new Color(1f, 0.25f, 0.25f), true);
-                TriggerShake(0.35f, 0.35f);
+                SpawnProp(PropKind.Cage, new Vector3(0f, 0f, 7.0f), heroes.Count < 4 ? HeroClass.Mage : HeroClass.Knight);
+                SpawnProp(PropKind.Chest, new Vector3(-6.0f, 0f, -6.0f), HeroClass.Knight);
+                AddFloatText(heroes[0].pos + Vector3.up * 2.5f, Loc("경고! 심연의 마왕 발록 등장!", "WARNING! Abyss Lord Balrog Spawned!"), new Color(1f, 0.25f, 0.25f), true);
+                TriggerShake(0.38f, 0.38f);
                 PlaySfx(SfxId.Hurt);
             }
 
             spawnTimer -= dt;
             if (spawnTimer <= 0f && enemies.Count < 22 && !bossDefeated)
             {
-                spawnTimer = waveIndex == 1 ? 2.4f : (waveIndex == 2 ? 2.0f : 3.2f);
-                int batch = waveIndex == 1 ? 2 : 3;
+                spawnTimer = (waveIndex == 1) ? 2.2f : ((waveIndex == 2) ? 1.8f : 3.0f);
+                int batch = (waveIndex == 1) ? 2 : 3;
                 for (int i = 0; i < batch; i++)
                 {
                     float r = UnityEngine.Random.value;
                     EnemyKind k = EnemyKind.Slime;
-                    if (waveIndex == 1) k = r < 0.65f ? EnemyKind.Slime : EnemyKind.Goblin;
-                    else if (waveIndex == 2) k = r < 0.35f ? EnemyKind.Goblin : (r < 0.72f ? EnemyKind.Skeleton : EnemyKind.Orc);
-                    else k = r < 0.45f ? EnemyKind.Skeleton : (r < 0.80f ? EnemyKind.Goblin : EnemyKind.Orc);
+                    if (waveIndex == 1) k = (r < 0.65f) ? EnemyKind.Slime : EnemyKind.Goblin;
+                    else if (waveIndex == 2) k = (r < 0.35f) ? EnemyKind.Goblin : ((r < 0.72f) ? EnemyKind.Skeleton : EnemyKind.Orc);
+                    else k = (r < 0.45f) ? EnemyKind.Skeleton : ((r < 0.80f) ? EnemyKind.Goblin : EnemyKind.Orc);
                     SpawnEnemyNearEdge(k);
                 }
             }
@@ -998,72 +1080,64 @@ namespace DungeonSlasher
             // 1. Dodge incoming danger telegraphs
             foreach (DangerTelegraph dt in telegraphs)
             {
-                Vector3 away = leaderPos - dt.pos;
-                away.y = 0f;
-                if (away.magnitude < dt.radius + 1.8f)
+                if (Vector3.Distance(leaderPos, dt.pos) <= dt.radius + 1.2f)
                 {
-                    if (away.sqrMagnitude < 0.01f) away = Vector3.right;
+                    Vector3 away = leaderPos - dt.pos;
+                    away.y = 0f;
+                    if (away.sqrMagnitude < 0.01f) away = Vector3.forward;
                     return away.normalized;
                 }
             }
 
-            // 2. Grab nearby healing heart if injured, or XP gem very close
-            float avgHpPct = GetSquadHpRatio();
-            PickupItem bestPickup = null;
-            float bestPickDist = 5.5f;
-            foreach (PickupItem p in pickups)
-            {
-                if (p.kind == PickupKind.Heart && avgHpPct > 0.85f) continue;
-                float d = Vector3.Distance(leaderPos, p.pos);
-                float weight = p.kind == PickupKind.Heart && avgHpPct < 0.6f ? d * 0.4f : d;
-                if (weight < bestPickDist)
-                {
-                    bestPickDist = weight;
-                    bestPickup = p;
-                }
-            }
-            if (bestPickup != null && bestPickDist < 3.8f)
-            {
-                return (bestPickup.pos - leaderPos).normalized;
-            }
-
-            // 3. Rescue Prison Cage (highest priority when squad < 5!)
+            // 2. Rescue closest trapped companion in cage
             DungeonProp bestCage = null;
-            float cageDist = 999f;
-            foreach (DungeonProp pr in props)
+            float minCageDist = 999f;
+            foreach (DungeonProp p in props)
             {
-                if (pr.kind == PropKind.Cage || pr.kind == PropKind.Chest)
+                if (p.kind == PropKind.Cage)
                 {
-                    float d = Vector3.Distance(leaderPos, pr.pos);
-                    if (pr.kind == PropKind.Cage) d *= 0.65f;
-                    if (d < cageDist)
-                    {
-                        cageDist = d;
-                        bestCage = pr;
-                    }
+                    float d = Vector3.Distance(leaderPos, p.pos);
+                    if (d < minCageDist) { minCageDist = d; bestCage = p; }
                 }
             }
-
-            // 4. Nearest Enemy
-            EnemyUnit nearestE = FindNearestEnemy(leaderPos);
-            float eDist = nearestE != null ? Vector3.Distance(leaderPos, nearestE.pos) : 999f;
-
-            if (bestCage != null && (cageDist < 8.5f || nearestE == null))
+            if (bestCage != null)
             {
                 Vector3 toProp = bestCage.pos - leaderPos;
-                if (toProp.magnitude > 1.7f) return toProp.normalized;
+                if (toProp.magnitude > 1.8f) return toProp.normalized;
                 return Vector3.zero;
             }
 
+            // 3. Attack closest enemy
+            EnemyUnit nearestE = FindNearestEnemy(leaderPos);
             if (nearestE != null)
             {
                 Vector3 toE = nearestE.pos - leaderPos;
-                float idealStop = 1.9f;
+                float idealStop = 2.0f;
                 if (toE.magnitude > idealStop) return toE.normalized;
-                // Gentle strafe around boss
                 if (nearestE.kind == EnemyKind.Boss)
                     return new Vector3(-toE.z, 0f, toE.x).normalized * 0.45f;
                 return Vector3.zero;
+            }
+
+            // 4. Break chests or crates
+            DungeonProp bestLoot = null;
+            float minLootDist = 999f;
+            foreach (DungeonProp p in props)
+            {
+                float d = Vector3.Distance(leaderPos, p.pos);
+                if (d < minLootDist) { minLootDist = d; bestLoot = p; }
+            }
+            if (bestLoot != null)
+            {
+                Vector3 toLoot = bestLoot.pos - leaderPos;
+                if (toLoot.magnitude > 1.8f) return toLoot.normalized;
+                return Vector3.zero;
+            }
+
+            // 5. Patrol toward center if nothing else
+            if (leaderPos.magnitude > 3.0f)
+            {
+                return (-leaderPos).normalized * 0.5f;
             }
 
             return Vector3.zero;
@@ -1078,20 +1152,17 @@ namespace DungeonSlasher
             }
 
             HeroMember leader = heroes[0];
-            float moveSpeed = 5.4f * multHaste * (hasteBuffTimer > 0f ? 1.45f : 1f);
+            float moveSpeed = 5.5f * multHaste * (hasteBuffTimer > 0f ? 1.45f : 1f);
 
             // Movement: Manual drag overrides AUTO cleanly
             Vector3 moveDir = Vector3.zero;
             if (draggingJoy && manualDir.sqrMagnitude > 0.01f)
             {
                 moveDir = new Vector3(manualDir.x, 0f, -manualDir.y); // Screen Y down -> world -Z
-                // Note: Input.mousePosition in OnGUI conversion: top is 0, bottom is 1334.
-                // Dragging UP gives negative gPos delta.y, so -manualDir.y is positive +Z (North)!
             }
             else if (autoMode)
             {
                 moveDir = ComputeAutoMoveDir(leader.pos);
-                // Auto Ult when charged and enemies clustered
                 if (ultCharge >= 100f && enemies.Count >= 3)
                 {
                     TriggerUltimate();
@@ -1102,10 +1173,10 @@ namespace DungeonSlasher
             {
                 leader.pos += moveDir * moveSpeed * dt;
                 leader.pos = ClampInsideArena(leader.pos, 0.7f);
-                if (Mathf.Abs(moveDir.x) > 0.08f) leader.facingRight = moveDir.x > 0f;
+                if (Mathf.Abs(moveDir.x) > 0.08f) leader.facingRight = (moveDir.x > 0f);
             }
 
-            // Formation follow for squadmates (우르릉 모험단 쫄래쫄래 대열!)
+            // Formation follow for squadmates (우르릉 군집 대열!)
             for (int i = 1; i < heroes.Count; i++)
             {
                 HeroMember hm = heroes[i];
@@ -1116,7 +1187,7 @@ namespace DungeonSlasher
                 if (diff.magnitude > 0.15f)
                 {
                     hm.pos += diff.normalized * Mathf.Min(diff.magnitude, moveSpeed * 1.15f * dt);
-                    if (Mathf.Abs(diff.x) > 0.05f) hm.facingRight = diff.x > 0f;
+                    if (Mathf.Abs(diff.x) > 0.05f) hm.facingRight = (diff.x > 0f);
                 }
             }
 
@@ -1130,18 +1201,19 @@ namespace DungeonSlasher
 
                 bool walking = (i == 0 && moveDir.sqrMagnitude > 0.05f);
                 float bob = walking ? Mathf.Abs(Mathf.Sin(Time.time * 12f + hm.animPhase)) * 0.16f : 0f;
-                hm.root.transform.position = hm.pos + Vector3.up * bob;
+                if (hm.root != null)
+                    hm.root.transform.position = hm.pos + Vector3.up * bob;
 
                 if (hm.cooldownTimer <= 0f)
                 {
-                    // Priest prioritizes healing if anyone < 80% HP
+                    // Priest prioritizes healing if anyone < 85% HP
                     if (hm.hClass == HeroClass.Priest && GetSquadHpRatio() < 0.85f)
                     {
                         foreach (HeroMember ally in heroes)
                         {
-                            ally.hp = Mathf.Min(ally.maxHp, ally.hp + 22f * multDamage);
+                            ally.hp = Mathf.Min(ally.maxHp, ally.hp + 24f * multDamage);
                         }
-                        AddFloatText(hm.pos + Vector3.up * 1.5f, "+치유!", new Color(0.42f, 1f, 0.55f), false);
+                        AddFloatText(hm.pos + Vector3.up * 1.5f, Loc("+치유!", "+HEAL!"), new Color(0.42f, 1f, 0.55f), false);
                         PlaySfx(SfxId.Heal);
                         hm.cooldownTimer = hm.attackCooldown;
                         continue;
@@ -1159,58 +1231,58 @@ namespace DungeonSlasher
 
                     if (aimPos.HasValue)
                     {
-                        hm.facingRight = aimPos.Value.x >= hm.pos.x;
-                        PerformHeroAttack(hm, aimPos.Value, tgtE, tgtP, dE <= hm.attackRange && dE <= dP + 0.5f);
                         hm.cooldownTimer = hm.attackCooldown;
+                        bool hitEnemy = (dE <= hm.attackRange && dE <= dP + 0.5f);
+                        PerformHeroAttack(hm, hitEnemy, tgtE, tgtP, aimPos.Value);
                     }
                 }
             }
         }
 
-        private void PerformHeroAttack(HeroMember hm, Vector3 aim, EnemyUnit tgtE, DungeonProp tgtP, bool hitEnemy)
+        private void PerformHeroAttack(HeroMember hm, bool hitEnemy, EnemyUnit tgtE, DungeonProp tgtP, Vector3 aimPos)
         {
+            Vector3 diff = aimPos - hm.pos;
+            diff.y = 0f;
+            Vector3 dir = diff.sqrMagnitude > 0.01f ? diff.normalized : Vector3.forward;
+            if (Mathf.Abs(dir.x) > 0.05f) hm.facingRight = (dir.x > 0f);
+
             float dmg = hm.attackDamage * multDamage;
-            Vector3 dir = (aim - hm.pos); dir.y = 0f;
-            if (dir.sqrMagnitude < 0.001f) dir = Vector3.forward;
-            dir.Normalize();
 
             if (hm.hClass == HeroClass.Knight)
             {
-                // Cleave all enemies/props in 2.6m arc
-                SpawnSlashEffect(hm.pos + dir * 1.1f + Vector3.up * 0.6f, 1.4f, new Color(0.5f, 0.9f, 1f));
+                Vector3 slashPos = hm.pos + dir * 1.4f + Vector3.up * 0.6f;
+                SpawnSlashEffect(slashPos, 1.6f, new Color(1f, 0.95f, 0.55f));
                 PlaySfx(SfxId.Slash);
+
                 foreach (EnemyUnit e in enemies.ToArray())
                 {
-                    if (Vector3.Distance(hm.pos, e.pos) <= hm.attackRange + e.radius)
-                        DamageEnemy(e, dmg);
+                    if (Vector3.Distance(slashPos, e.pos) <= 2.2f) DamageEnemy(e, dmg);
                 }
                 foreach (DungeonProp p in props.ToArray())
                 {
-                    if (Vector3.Distance(hm.pos, p.pos) <= hm.attackRange + p.radius)
-                        DamageProp(p, dmg);
+                    if (Vector3.Distance(slashPos, p.pos) <= 2.1f) DamageProp(p, dmg);
                 }
             }
             else if (hm.hClass == HeroClass.Archer)
             {
-                SpawnProjectile(true, false, hm.pos + Vector3.up * 0.7f, dir * 16f, dmg, 0f);
+                SpawnProjectile(true, false, hm.pos + Vector3.up * 0.6f, dir * 15f, dmg, 0f);
                 PlaySfx(SfxId.Bow);
             }
             else if (hm.hClass == HeroClass.Mage)
             {
-                SpawnProjectile(true, true, hm.pos + Vector3.up * 0.7f, dir * 11.5f, dmg, 2.3f);
+                SpawnProjectile(true, true, hm.pos + Vector3.up * 0.7f, dir * 12f, dmg, 2.4f);
                 PlaySfx(SfxId.Boom);
             }
             else if (hm.hClass == HeroClass.Priest)
             {
-                // Holy Smite instant bolt
                 if (hitEnemy && tgtE != null)
                 {
-                    SpawnSlashEffect(tgtE.pos + Vector3.up * 0.6f, 1.3f, new Color(1f, 0.92f, 0.45f));
+                    SpawnSlashEffect(tgtE.pos + Vector3.up * 0.6f, 1.4f, new Color(1f, 0.92f, 0.45f));
                     DamageEnemy(tgtE, dmg);
                 }
                 else if (tgtP != null)
                 {
-                    SpawnSlashEffect(tgtP.pos + Vector3.up * 0.6f, 1.2f, new Color(1f, 0.92f, 0.45f));
+                    SpawnSlashEffect(tgtP.pos + Vector3.up * 0.6f, 1.3f, new Color(1f, 0.92f, 0.45f));
                     DamageProp(tgtP, dmg);
                 }
                 PlaySfx(SfxId.Heal);
@@ -1228,51 +1300,38 @@ namespace DungeonSlasher
                 if (whirlwindOrbRoot == null)
                 {
                     Renderer r;
-                    whirlwindOrbRoot = CreateBillboard("fx_slash", center, 1.3f, out r);
+                    whirlwindOrbRoot = CreateBillboard("fx_slash", center, 1.35f, out r);
                 }
                 float ang = Time.time * (5.5f + rankWhirlwind);
                 whirlwindOrbRoot.transform.position = center + new Vector3(Mathf.Cos(ang) * 2.4f, 0.5f, Mathf.Sin(ang) * 2.4f);
                 whirlwindTimer -= dt;
                 if (whirlwindTimer <= 0f)
                 {
-                    whirlwindTimer = 0.42f;
+                    whirlwindTimer = 0.40f;
                     foreach (EnemyUnit e in enemies.ToArray())
                     {
-                        if (Vector3.Distance(center, e.pos) <= 3.1f)
-                            DamageEnemy(e, (20f + 12f * rankWhirlwind) * multDamage);
+                        if (Vector3.Distance(whirlwindOrbRoot.transform.position, e.pos) <= 1.6f)
+                        {
+                            DamageEnemy(e, 22f * rankWhirlwind * multDamage);
+                        }
                     }
                 }
             }
 
-            // 2. Chain Fireball
-            if (rankChainFire > 0)
-            {
-                chainFireTimer -= dt;
-                if (chainFireTimer <= 0f && enemies.Count > 0)
-                {
-                    chainFireTimer = Mathf.Max(0.75f, 1.8f - rankChainFire * 0.2f);
-                    EnemyUnit tgt = FindNearestEnemy(center);
-                    if (tgt != null)
-                    {
-                        Vector3 dir = (tgt.pos - center).normalized;
-                        SpawnProjectile(true, true, center + Vector3.up * 0.7f, dir * 12.5f, (35f + 18f * rankChainFire) * multDamage, 2.5f);
-                        PlaySfx(SfxId.Boom);
-                    }
-                }
-            }
-
-            // 3. Thunder Strike
+            // 2. Thunder Strike
             if (rankThunder > 0)
             {
                 thunderTimer -= dt;
-                if (thunderTimer <= 0f && enemies.Count > 0)
+                if (thunderTimer <= 0f)
                 {
-                    thunderTimer = Mathf.Max(0.9f, 2.2f - rankThunder * 0.25f);
-                    EnemyUnit high = enemies[0];
-                    foreach (EnemyUnit e in enemies) if (e.hp > high.hp) high = e;
-                    SpawnSlashEffect(high.pos + Vector3.up * 1.2f, 2.1f, new Color(0.45f, 0.92f, 1f));
-                    DamageEnemy(high, (55f + 28f * rankThunder) * multDamage);
-                    PlaySfx(SfxId.Slash);
+                    thunderTimer = Mathf.Max(1.2f, 3.2f - rankThunder * 0.6f);
+                    EnemyUnit tgt = FindNearestEnemy(center);
+                    if (tgt != null)
+                    {
+                        SpawnSlashEffect(tgt.pos + Vector3.up * 1.2f, 2.2f, new Color(0.45f, 0.85f, 1f));
+                        DamageEnemy(tgt, 55f * rankThunder * multDamage);
+                        PlaySfx(SfxId.Boom);
+                    }
                 }
             }
         }
@@ -1283,20 +1342,21 @@ namespace DungeonSlasher
             ultCharge = 0f;
             hasteBuffTimer = 5.0f;
             Vector3 center = heroes[0].pos;
-            TriggerShake(0.4f, 0.45f);
+            TriggerShake(0.42f, 0.48f);
             PlaySfx(SfxId.Boom);
-            AddFloatText(center + Vector3.up * 2.3f, "⚡ 일제 돌격 메테오!!", new Color(1f, 0.78f, 0.22f), true);
+            AddFloatText(center + Vector3.up * 2.4f, Loc("⚡ 일제 돌격 메테오!!", "⚡ ALL-OUT METEOR RAID!!"), new Color(1f, 0.80f, 0.20f), true);
+
             foreach (EnemyUnit e in enemies.ToArray())
             {
-                if (Vector3.Distance(center, e.pos) <= 10.5f)
+                if (Vector3.Distance(center, e.pos) <= 11f)
                 {
-                    SpawnSlashEffect(e.pos + Vector3.up * 0.6f, 2.2f, new Color(1f, 0.55f, 0.15f));
-                    DamageEnemy(e, 110f * multDamage);
+                    SpawnSlashEffect(e.pos + Vector3.up * 0.6f, 2.4f, new Color(1f, 0.55f, 0.15f));
+                    DamageEnemy(e, 120f * multDamage);
                 }
             }
             foreach (DungeonProp p in props.ToArray())
             {
-                if (Vector3.Distance(center, p.pos) <= 9.5f) DamageProp(p, 90f);
+                if (Vector3.Distance(center, p.pos) <= 10f) DamageProp(p, 95f);
             }
         }
 
@@ -1316,7 +1376,7 @@ namespace DungeonSlasher
                 Vector3 diff = tgt.pos - e.pos;
                 diff.y = 0f;
                 float dist = diff.magnitude;
-                if (Mathf.Abs(diff.x) > 0.05f) e.facingRight = diff.x > 0f;
+                if (Mathf.Abs(diff.x) > 0.05f) e.facingRight = (diff.x > 0f);
 
                 if (dist > e.attackRange)
                 {
@@ -1330,30 +1390,26 @@ namespace DungeonSlasher
                     {
                         SpawnProjectile(false, false, e.pos + Vector3.up * 0.6f, diff.normalized * 8.5f, e.damage, 0f);
                     }
+                    else if (e.kind == EnemyKind.Boss)
+                    {
+                        SpawnTelegraph(tgt.pos, 2.6f, 1.25f, e.damage * 1.5f);
+                        for (int k = -1; k <= 1; k++)
+                        {
+                            Vector3 dir = Quaternion.Euler(0, k * 28f, 0) * diff.normalized;
+                            SpawnProjectile(false, true, e.pos + Vector3.up * 1.1f, dir * 7.5f, e.damage, 1.8f);
+                        }
+                    }
                     else
                     {
                         DamageHero(tgt, e.damage);
-                    }
-                }
-
-                // Boss Special Telegraphed AoE + Radial Volley
-                if (e.kind == EnemyKind.Boss)
-                {
-                    e.specialTimer -= dt;
-                    if (e.specialTimer <= 0f)
-                    {
-                        e.specialTimer = 4.2f;
-                        SpawnTelegraph(tgt.pos, 3.0f, 1.35f, e.damage * 1.6f);
-                        for (int k = 0; k < 6; k++)
-                        {
-                            float a = k * (Mathf.PI * 2f / 6f) + Time.time;
-                            SpawnProjectile(false, true, e.pos + Vector3.up * 0.8f, new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * 6.8f, e.damage * 0.9f, 0f);
-                        }
+                        SpawnSlashEffect(tgt.pos + Vector3.up * 0.5f, 1.2f, new Color(1f, 0.25f, 0.25f));
+                        PlaySfx(SfxId.Hurt);
                     }
                 }
 
                 float bob = Mathf.Abs(Mathf.Sin(Time.time * 9f + i)) * 0.09f;
-                e.root.transform.position = e.pos + Vector3.up * bob;
+                if (e.root != null)
+                    e.root.transform.position = e.pos + Vector3.up * bob;
             }
         }
 
@@ -1410,9 +1466,9 @@ namespace DungeonSlasher
                 Projectile pr = projectiles[i];
                 pr.life -= dt;
                 pr.pos += pr.vel * dt;
-                pr.root.transform.position = pr.pos;
+                if (pr.root != null) pr.root.transform.position = pr.pos;
 
-                bool hit = pr.life <= 0f || Mathf.Abs(pr.pos.x) > ArenaHalf || Mathf.Abs(pr.pos.z) > ArenaHalf;
+                bool hit = (pr.life <= 0f || Mathf.Abs(pr.pos.x) > ArenaHalf || Mathf.Abs(pr.pos.z) > ArenaHalf);
 
                 if (!hit && pr.isPlayer)
                 {
@@ -1424,10 +1480,15 @@ namespace DungeonSlasher
                             if (pr.aoeRadius > 0f)
                             {
                                 SpawnSlashEffect(pr.pos, pr.aoeRadius * 1.1f, new Color(1f, 0.52f, 0.15f));
-                                foreach (EnemyUnit ae in enemies.ToArray())
-                                    if (Vector3.Distance(ae.pos, e.pos) <= pr.aoeRadius) DamageEnemy(ae, pr.damage);
+                                foreach (EnemyUnit aoeE in enemies.ToArray())
+                                {
+                                    if (Vector3.Distance(pr.pos, aoeE.pos) <= pr.aoeRadius) DamageEnemy(aoeE, pr.damage);
+                                }
                             }
-                            else DamageEnemy(e, pr.damage);
+                            else
+                            {
+                                DamageEnemy(e, pr.damage);
+                            }
                             break;
                         }
                     }
@@ -1435,7 +1496,7 @@ namespace DungeonSlasher
                     {
                         foreach (DungeonProp p in props.ToArray())
                         {
-                            if (Vector3.Distance(new Vector3(pr.pos.x, 0, pr.pos.z), p.pos) <= p.radius + 0.4f)
+                            if (Vector3.Distance(new Vector3(pr.pos.x, 0, pr.pos.z), p.pos) <= 1.2f)
                             {
                                 hit = true;
                                 DamageProp(p, pr.damage);
@@ -1448,10 +1509,12 @@ namespace DungeonSlasher
                 {
                     foreach (HeroMember h in heroes.ToArray())
                     {
-                        if (Vector3.Distance(new Vector3(pr.pos.x, 0, pr.pos.z), h.pos) <= 0.72f)
+                        if (Vector3.Distance(new Vector3(pr.pos.x, 0, pr.pos.z), h.pos) <= 0.85f)
                         {
                             hit = true;
                             DamageHero(h, pr.damage);
+                            SpawnSlashEffect(h.pos + Vector3.up * 0.5f, 1.2f, new Color(1f, 0.25f, 0.25f));
+                            PlaySfx(SfxId.Hurt);
                             break;
                         }
                     }
@@ -1469,38 +1532,51 @@ namespace DungeonSlasher
         {
             e.hp -= dmg;
             e.hitFlash = 0.12f;
+            ultCharge = Mathf.Min(100f, ultCharge + 4.5f);
             if (showDmgText)
-                AddFloatText(e.pos + Vector3.up * 1.3f, Mathf.RoundToInt(dmg).ToString(), e.kind == EnemyKind.Boss ? new Color(1f, 0.75f, 0.25f) : Color.white, false);
+            {
+                bool crit = UnityEngine.Random.value < 0.22f;
+                float finalDmg = crit ? dmg * 1.6f : dmg;
+                string t = Mathf.RoundToInt(finalDmg).ToString();
+                AddFloatText(e.pos + Vector3.up * 1.2f, crit ? (t + " CRIT!") : t, crit ? new Color(1f, 0.82f, 0.18f) : Color.white, crit);
+            }
+
+            if (vampiricPct > 0f && heroes.Count > 0)
+            {
+                HeroMember lead = heroes[0];
+                lead.hp = Mathf.Min(lead.maxHp, lead.hp + dmg * vampiricPct);
+            }
 
             if (e.hp <= 0f)
             {
-                kills++;
-                ultCharge = Mathf.Min(100f, ultCharge + (e.kind == EnemyKind.Boss ? 40f : 6.5f));
-                if (vampiricPct > 0f && heroes.Count > 0)
-                {
-                    heroes[0].hp = Mathf.Min(heroes[0].maxHp, heroes[0].hp + heroes[0].maxHp * vampiricPct);
-                }
-
-                SpawnPickup(PickupKind.Gem, e.pos, e.kind == EnemyKind.Orc ? 24f : (e.kind == EnemyKind.Boss ? 100f : 10f));
-                if (UnityEngine.Random.value < 0.45f) SpawnPickup(PickupKind.Coin, e.pos + new Vector3(0.4f, 0, 0.2f), 10f);
-                if (UnityEngine.Random.value < 0.08f) SpawnPickup(PickupKind.Heart, e.pos + new Vector3(-0.4f, 0, 0.2f), 35f);
-
-                bool wasBoss = e.kind == EnemyKind.Boss;
-                Destroy(e.root);
-                enemies.Remove(e);
-
-                if (wasBoss)
-                {
-                    bossDefeated = true;
-                    totalGold += runGold + 150;
-                    bestFloor = Mathf.Max(bestFloor, currentFloor + 1);
-                    PlayerPrefs.SetInt("DS_TotalGold", totalGold);
-                    PlayerPrefs.SetInt("DS_BestFloor", bestFloor);
-                    PlayerPrefs.Save();
-                    PlaySfx(SfxId.Victory);
-                    screen = GameScreen.Victory;
-                }
+                KillEnemy(e);
             }
+        }
+
+        private void KillEnemy(EnemyUnit e)
+        {
+            kills++;
+            float xpVal = (e.kind == EnemyKind.Boss) ? 140f : ((e.kind == EnemyKind.Orc) ? 35f : 15f);
+            float goldVal = (e.kind == EnemyKind.Boss) ? 80f : ((e.kind == EnemyKind.Orc) ? 20f : 8f);
+
+            SpawnPickup(PickupKind.Gem, e.pos, xpVal);
+            SpawnPickup(PickupKind.Coin, e.pos + new Vector3(0.4f, 0, 0), goldVal);
+            if (UnityEngine.Random.value < 0.25f)
+                SpawnPickup(PickupKind.Heart, e.pos + new Vector3(-0.4f, 0, 0), 30f);
+
+            PlaySfx(SfxId.Pickup);
+
+            if (e.kind == EnemyKind.Boss)
+            {
+                bossDefeated = true;
+                TriggerShake(0.6f, 0.6f);
+                PlaySfx(SfxId.Victory);
+                AddFloatText(e.pos + Vector3.up * 2f, Loc("마왕 발록 토벌 완료!!", "LORD BALROG DEFEATED!!"), new Color(1f, 0.88f, 0.25f), true);
+                Invoke(nameof(OnVictory), 1.8f);
+            }
+
+            Destroy(e.root);
+            enemies.Remove(e);
         }
 
         private void DamageProp(DungeonProp p, float dmg)
@@ -1509,60 +1585,67 @@ namespace DungeonSlasher
             p.hitFlash = 0.12f;
             if (p.hp <= 0f)
             {
-                if (p.kind == PropKind.Cage)
+                BreakProp(p);
+            }
+        }
+
+        private void BreakProp(DungeonProp p)
+        {
+            TriggerShake(0.2f, 0.2f);
+            PlaySfx(SfxId.Boom);
+            SpawnSlashEffect(p.pos + Vector3.up * 0.6f, 1.8f, new Color(1f, 0.82f, 0.35f));
+
+            if (p.kind == PropKind.Cage)
+            {
+                if (heroes.Count < 5)
                 {
-                    if (heroes.Count < 5)
-                    {
-                        SpawnHero(p.captiveClass, p.pos);
-                        AddFloatText(p.pos + Vector3.up * 1.8f, "동료 구출 성공! (+1 영웅)", new Color(0.35f, 1f, 0.65f), true);
-                    }
-                    else
-                    {
-                        foreach (HeroMember h in heroes) h.hp = h.maxHp;
-                        AddFloatText(p.pos + Vector3.up * 1.8f, "전원 완치 & 보너스 골드!", new Color(1f, 0.85f, 0.25f), true);
-                        SpawnPickup(PickupKind.Coin, p.pos, 40f);
-                    }
+                    SpawnHero(p.captiveHero, p.pos);
+                    string hName = (p.captiveHero == HeroClass.Mage) ? Loc("마법사 루나", "Mage Luna") : Loc("사제 세라", "Priestess Sera");
+                    AddFloatText(p.pos + Vector3.up * 2.2f, Loc("동료 구출! " + hName + " 합류!", "RESCUED! " + hName + " Joined!"), new Color(0.42f, 1f, 0.65f), true);
                     PlaySfx(SfxId.Rescue);
-                    TriggerShake(0.2f, 0.2f);
-                }
-                else if (p.kind == PropKind.Chest)
-                {
-                    for (int k = 0; k < 4; k++) SpawnPickup(PickupKind.Coin, p.pos + new Vector3(UnityEngine.Random.Range(-0.8f, 0.8f), 0, UnityEngine.Random.Range(-0.8f, 0.8f)), 15f);
-                    SpawnPickup(PickupKind.Gem, p.pos, 22f);
-                    SpawnPickup(PickupKind.Heart, p.pos + Vector3.right * 0.5f, 45f);
-                    AddFloatText(p.pos + Vector3.up * 1.6f, "보물 상자 개봉!", new Color(1f, 0.85f, 0.25f), false);
-                    PlaySfx(SfxId.Pickup);
                 }
                 else
                 {
-                    SpawnPickup(PickupKind.Coin, p.pos, 10f);
-                    if (UnityEngine.Random.value < 0.4f) SpawnPickup(PickupKind.Heart, p.pos, 25f);
-                    PlaySfx(SfxId.Slash);
+                    SpawnPickup(PickupKind.Heart, p.pos, 50f);
+                    SpawnPickup(PickupKind.Coin, p.pos, 40f);
                 }
-                Destroy(p.root);
-                props.Remove(p);
             }
+            else if (p.kind == PropKind.Chest)
+            {
+                SpawnPickup(PickupKind.Gem, p.pos, 45f);
+                SpawnPickup(PickupKind.Coin, p.pos + Vector3.left * 0.4f, 35f);
+                SpawnPickup(PickupKind.Heart, p.pos + Vector3.right * 0.4f, 35f);
+                AddFloatText(p.pos + Vector3.up * 1.5f, Loc("보물상자 획득!", "TREASURE CHEST!"), Color.yellow, false);
+            }
+            else
+            {
+                SpawnPickup(PickupKind.Coin, p.pos, 15f);
+                if (UnityEngine.Random.value < 0.4f)
+                    SpawnPickup(PickupKind.Heart, p.pos, 25f);
+            }
+
+            Destroy(p.root);
+            props.Remove(p);
         }
 
         private void DamageHero(HeroMember h, float dmg)
         {
             h.hp -= dmg;
-            h.hitFlash = 0.16f;
-            if (showDmgText)
-                AddFloatText(h.pos + Vector3.up * 1.4f, "-" + Mathf.RoundToInt(dmg), new Color(1f, 0.32f, 0.32f), false);
-            PlaySfx(SfxId.Hurt);
+            h.hitFlash = 0.14f;
+            TriggerShake(0.18f, 0.18f);
 
             if (h.hp <= 0f)
             {
-                AddFloatText(h.pos + Vector3.up * 1.6f, h.name + " 쓰러짐!", new Color(1f, 0.2f, 0.2f), true);
+                AddFloatText(h.pos + Vector3.up * 1.5f, Loc(h.nameKr + " 전사!", h.nameEn + " Fallen!"), Color.red, true);
                 Destroy(h.root);
                 heroes.Remove(h);
                 if (heroes.Count == 0)
                 {
                     totalGold += runGold;
-                    PlayerPrefs.SetInt("DS_TotalGold", totalGold);
+                    PlayerPrefs.SetInt("GR_TotalGold", totalGold);
                     PlayerPrefs.Save();
                     screen = GameScreen.Defeat;
+                    PlaySfx(SfxId.Hurt);
                 }
             }
         }
@@ -1570,8 +1653,8 @@ namespace DungeonSlasher
         private void SpawnPickup(PickupKind kind, Vector3 pos, float val)
         {
             Renderer r;
-            string key = kind == PickupKind.Coin ? "fx_coin" : (kind == PickupKind.Heart ? "fx_heart" : "fx_gem");
-            GameObject go = CreateBillboard(key, pos, 0.72f, out r);
+            string key = (kind == PickupKind.Coin) ? "fx_coin" : ((kind == PickupKind.Heart) ? "fx_heart" : "fx_gem");
+            GameObject go = CreateBillboard(key, pos, 0.75f, out r);
             pickups.Add(new PickupItem { kind = kind, root = go, pos = pos, value = val, bobOffset = UnityEngine.Random.Range(0f, 6f) });
         }
 
@@ -1583,11 +1666,12 @@ namespace DungeonSlasher
             {
                 PickupItem p = pickups[i];
                 float d = Vector3.Distance(leader, p.pos);
-                if (d < 4.2f)
+                if (d < 4.5f)
                 {
-                    p.pos = Vector3.MoveTowards(p.pos, leader, dt * 11.5f);
+                    p.pos = Vector3.MoveTowards(p.pos, leader, dt * 12.5f);
                 }
-                p.root.transform.position = p.pos + Vector3.up * (0.25f + Mathf.Sin(Time.time * 5f + p.bobOffset) * 0.1f);
+                if (p.root != null)
+                    p.root.transform.position = p.pos + Vector3.up * (0.28f + Mathf.Sin(Time.time * 5f + p.bobOffset) * 0.1f);
 
                 if (d < 1.15f)
                 {
@@ -1598,46 +1682,79 @@ namespace DungeonSlasher
                     }
                     else if (p.kind == PickupKind.Heart)
                     {
-                        foreach (HeroMember h in heroes) h.hp = Mathf.Min(h.maxHp, h.hp + p.value);
-                        AddFloatText(leader + Vector3.up * 1.5f, "+체력 회복", new Color(0.45f, 1f, 0.55f), false);
+                        foreach (HeroMember h in heroes)
+                        {
+                            h.hp = Mathf.Min(h.maxHp, h.hp + p.value);
+                        }
+                        AddFloatText(leader + Vector3.up * 1.4f, Loc("체력 회복!", "HP HEALED!"), new Color(0.35f, 1f, 0.55f), false);
+                        PlaySfx(SfxId.Heal);
                     }
-                    else
+                    else if (p.kind == PickupKind.Gem)
                     {
                         squadXp += p.value;
                         if (squadXp >= nextXp)
                         {
                             squadXp -= nextXp;
                             squadLevel++;
-                            nextXp = Mathf.Round(nextXp * 1.38f + 12f);
-                            OpenLevelUpOffers();
+                            nextXp = Mathf.RoundToInt(nextXp * 1.4f + 10f);
+                            OpenLevelUp();
                         }
                     }
-                    PlaySfx(SfxId.Pickup);
                     Destroy(p.root);
                     pickups.RemoveAt(i);
                 }
             }
         }
 
-        private void OpenLevelUpOffers()
+        private void OpenLevelUp()
         {
-            List<UpgradeOffer> pool = new List<UpgradeOffer>
-            {
-                new UpgradeOffer { id = UpgradeId.Whirlwind, title = "회오리 검기", badge = "범위 회전 공격", desc = "원정대 주위를 도는 회전 칼날로 적을 자동 타격합니다.", accent = new Color(0.35f, 0.85f, 1f) },
-                new UpgradeOffer { id = UpgradeId.ChainFire, title = "연쇄 화염구", badge = "자동 폭발 탄환", desc = "가까운 적에게 폭발하는 파이어볼을 주기적으로 발사합니다.", accent = new Color(1f, 0.55f, 0.20f) },
-                new UpgradeOffer { id = UpgradeId.Thunder, title = "천둥 낙뢰", badge = "강적 단일 폭격", desc = "체력이 가장 높은 적에게 강력한 번개를 내리칩니다.", accent = new Color(0.55f, 0.72f, 1f) },
-                new UpgradeOffer { id = UpgradeId.Haste, title = "전장의 질주", badge = "공속·이속 +22%", desc = "모든 영웅의 공격 속도와 이동 속도가 크게 빨라집니다.", accent = new Color(0.35f, 1f, 0.65f) },
-                new UpgradeOffer { id = UpgradeId.SquadPower, title = "불굴의 원정대", badge = "공격·체력 +25% & 완치", desc = "전 영웅 공격력과 최대 체력이 증가하고 체력을 회복합니다.", accent = new Color(1f, 0.82f, 0.28f) },
-                new UpgradeOffer { id = UpgradeId.Vampiric, title = "흡혈의 룬", badge = "처치 시 HP 4% 회복", desc = "몬스터를 쓰러뜨릴 때마다 선봉 영웅의 체력이 회복됩니다.", accent = new Color(0.95f, 0.35f, 0.52f) },
+            PlaySfx(SfxId.LevelUp);
+            UpgradeOffer[] pool = {
+                new UpgradeOffer {
+                    id = UpgradeId.Whirlwind,
+                    titleKr = "회오리 검기", titleEn = "Whirlwind Slash",
+                    descKr = "영웅 주위를 회전하며 적을 지속 타격하는 칼바람 소환", descEn = "Summons spinning wind blades that orbit squad and damage foes",
+                    badgeKr = "공격 스킬", badgeEn = "ACTIVE SKILL", accent = new Color(0.42f, 0.82f, 1f)
+                },
+                new UpgradeOffer {
+                    id = UpgradeId.ChainFire,
+                    titleKr = "연쇄 화염구", titleEn = "Chain Fireball",
+                    descKr = "마법사의 화염구 범위 +40% 및 관통 폭발 연쇄 반응", descEn = "Mage fireball AoE +40% with explosive chain blast",
+                    badgeKr = "마법 강화", badgeEn = "MAGIC BUFF", accent = new Color(1f, 0.55f, 0.20f)
+                },
+                new UpgradeOffer {
+                    id = UpgradeId.Thunder,
+                    titleKr = "심판의 벼락", titleEn = "Holy Thunder",
+                    descKr = "가장 강한 적에게 주기적으로 벼락을 내리쳐 55 광역 피해", descEn = "Periodically calls down divine lightning on toughest enemies",
+                    badgeKr = "자동 낙뢰", badgeEn = "AUTO THUNDER", accent = new Color(1f, 0.88f, 0.28f)
+                },
+                new UpgradeOffer {
+                    id = UpgradeId.Haste,
+                    titleKr = "신속의 오라", titleEn = "Haste Aura",
+                    descKr = "원정대 이동 속도 및 공격 속도 영구 15% 가속", descEn = "Permanently increases squad move and attack speed by 15%",
+                    badgeKr = "속도 강화", badgeEn = "SPEED BUFF", accent = new Color(0.40f, 1f, 0.65f)
+                },
+                new UpgradeOffer {
+                    id = UpgradeId.SquadPower,
+                    titleKr = "원정대 무력", titleEn = "Squad Might",
+                    descKr = "모든 영웅의 기본 공격력 +20% 영구 증가", descEn = "Permanently increases all hero attack damage by +20%",
+                    badgeKr = "공격력 증가", badgeEn = "ATTACK BUFF", accent = new Color(1f, 0.35f, 0.35f)
+                },
+                new UpgradeOffer {
+                    id = UpgradeId.Vampiric,
+                    titleKr = "흡혈의 손길", titleEn = "Vampiric Touch",
+                    descKr = "적에게 가한 피해의 4%만큼 선봉 대장 체력 지속 흡혈", descEn = "Heals leader for 4% of all damage dealt to enemies",
+                    badgeKr = "생존 패시브", badgeEn = "SURVIVAL", accent = new Color(0.85f, 0.45f, 1f)
+                }
             };
 
+            List<UpgradeOffer> l = new List<UpgradeOffer>(pool);
             for (int i = 0; i < 3; i++)
             {
-                int idx = UnityEngine.Random.Range(0, pool.Count);
-                currentOffers[i] = pool[idx];
-                pool.RemoveAt(idx);
+                int r = UnityEngine.Random.Range(0, l.Count);
+                currentOffers[i] = l[r];
+                l.RemoveAt(r);
             }
-            PlaySfx(SfxId.LevelUp);
             screen = GameScreen.LevelUp;
         }
 
@@ -1648,15 +1765,12 @@ namespace DungeonSlasher
                 case UpgradeId.Whirlwind: rankWhirlwind++; break;
                 case UpgradeId.ChainFire: rankChainFire++; break;
                 case UpgradeId.Thunder: rankThunder++; break;
-                case UpgradeId.Haste: multHaste += 0.22f; break;
-                case UpgradeId.SquadPower:
-                    multDamage += 0.25f;
-                    foreach (HeroMember h in heroes) { h.maxHp *= 1.25f; h.hp = h.maxHp; }
-                    break;
+                case UpgradeId.Haste: multHaste += 0.15f; break;
+                case UpgradeId.SquadPower: multDamage += 0.20f; break;
                 case UpgradeId.Vampiric: vampiricPct += 0.04f; break;
             }
             if (heroes.Count > 0)
-                AddFloatText(heroes[0].pos + Vector3.up * 2f, offer.title + " 획득!", offer.accent, true);
+                AddFloatText(heroes[0].pos + Vector3.up * 2f, Loc(offer.titleKr + " 획득!", offer.titleEn + " ACQUIRED!"), offer.accent, true);
             screen = GameScreen.Playing;
         }
 
@@ -1753,18 +1867,17 @@ namespace DungeonSlasher
                 if (d.magnitude < minD && d.magnitude > 0.001f)
                     p = pil + d.normalized * minD;
             }
-            p.y = 0f;
             return p;
         }
 
         private EnemyUnit FindNearestEnemy(Vector3 p)
         {
             EnemyUnit best = null;
-            float bestD = 999f;
+            float minD = 999f;
             foreach (EnemyUnit e in enemies)
             {
                 float d = Vector3.Distance(p, e.pos);
-                if (d < bestD) { bestD = d; best = e; }
+                if (d < minD) { minD = d; best = e; }
             }
             return best;
         }
@@ -1772,11 +1885,11 @@ namespace DungeonSlasher
         private DungeonProp FindNearestProp(Vector3 p)
         {
             DungeonProp best = null;
-            float bestD = 999f;
+            float minD = 999f;
             foreach (DungeonProp pr in props)
             {
                 float d = Vector3.Distance(p, pr.pos);
-                if (d < bestD) { bestD = d; best = pr; }
+                if (d < minD) { minD = d; best = pr; }
             }
             return best;
         }
@@ -1784,13 +1897,23 @@ namespace DungeonSlasher
         private HeroMember FindNearestHero(Vector3 p)
         {
             HeroMember best = null;
-            float bestD = 999f;
+            float minD = 999f;
             foreach (HeroMember h in heroes)
             {
                 float d = Vector3.Distance(p, h.pos);
-                if (d < bestD) { bestD = d; best = h; }
+                if (d < minD) { minD = d; best = h; }
             }
             return best;
+        }
+
+        private void OnVictory()
+        {
+            totalGold += runGold + 150;
+            if (currentFloor >= bestFloor) bestFloor = currentFloor + 1;
+            PlayerPrefs.SetInt("GR_TotalGold", totalGold);
+            PlayerPrefs.SetInt("GR_BestFloor", bestFloor);
+            PlayerPrefs.Save();
+            screen = GameScreen.Victory;
         }
 
         private float GetSquadHpRatio()
@@ -1856,24 +1979,40 @@ namespace DungeonSlasher
 
         private void DrawTitle()
         {
+            // Language Toggle (Top Right)
+            string langBtnLabel = (curLang == GameLang.KR) ? "🌐 한국어 (KR)" : "🌐 English (EN)";
+            if (GUI.Button(new Rect(480, 42, 230, 48), langBtnLabel, BtnStyle(18, texBtnDark, Color.white)))
+            {
+                curLang = (curLang == GameLang.KR) ? GameLang.EN : GameLang.KR;
+                PlayerPrefs.SetInt("GR_Language", (int)curLang);
+                PlayerPrefs.Save();
+                PlaySfx(SfxId.Pickup);
+            }
+
             GUI.DrawTexture(new Rect(40, 100, 670, 260), texHeaderPanel);
-            GUI.Label(new Rect(55, 128, 640, 68), "우르릉 던전 원정대", LabelStyle(48, new Color(1f, 0.88f, 0.35f)));
-            GUI.Label(new Rect(55, 198, 640, 36), "DUNGEON SLASHER · v0.1.0", LabelStyle(20, new Color(0.50f, 0.85f, 1f)));
-            GUI.Label(new Rect(55, 244, 640, 82), "감옥의 동료를 구출해 군집 원정대를 꾸리고\n심연의 마왕 발록을 토벌하라! (한 손 조이스틱 + AUTO)", LabelStyle(20, new Color(0.90f, 0.93f, 0.98f), TextAnchor.MiddleCenter, false));
+            GUI.Label(new Rect(55, 122, 640, 68), Loc("고잉레이드", "GOIN RAID"), LabelStyle(52, new Color(1f, 0.88f, 0.35f)));
+            GUI.Label(new Rect(55, 195, 640, 36), Loc("GOIN RAID · v0.2.0 원핸드 군집 슬래셔", "GOIN RAID · v0.2.0 Squad Action RPG"), LabelStyle(22, new Color(0.50f, 0.85f, 1f)));
+            GUI.Label(new Rect(55, 240, 640, 82),
+                Loc("감옥의 동료를 구출해 5인 원정대를 꾸리고\n심연의 마왕 발록을 토벌하라! (한 손 조작 + AUTO)",
+                    "Rescue captive allies, build a 5-hero squad\nand defeat Lord Balrog! (One-Hand + AUTO)"),
+                LabelStyle(20, new Color(0.90f, 0.93f, 0.98f), TextAnchor.MiddleCenter, false));
 
             GUI.DrawTexture(new Rect(110, 385, 530, 74), texDarkPanel);
-            GUI.Label(new Rect(120, 392, 510, 60), "최고 도달 층: " + bestFloor + "층   |   보유 골드: " + totalGold + " G", LabelStyle(22, new Color(1f, 0.85f, 0.35f)));
+            GUI.Label(new Rect(120, 392, 510, 60),
+                Loc("최고 도달: 제 " + bestFloor + "층   |   골드: " + totalGold + " G",
+                    "Best Floor: " + bestFloor + "   |   Gold: " + totalGold + " G"),
+                LabelStyle(22, new Color(1f, 0.85f, 0.35f)));
 
-            if (GUI.Button(new Rect(85, 840, 580, 96), "⚔️  던전 출정하기 (" + bestFloor + "층 도전)", BtnStyle(28, texBtnGold, Color.white)))
+            if (GUI.Button(new Rect(85, 840, 580, 96), Loc("⚔️  레이드 출정하기 (" + bestFloor + "층)", "⚔️  START RAID (Floor " + bestFloor + ")"), BtnStyle(28, texBtnGold, Color.white)))
             {
                 StartRun(bestFloor);
             }
-            if (GUI.Button(new Rect(85, 960, 580, 76), "📜  원정대 & 몬스터 도감", BtnStyle(24, texBtnDark, Color.white)))
+            if (GUI.Button(new Rect(85, 960, 580, 76), Loc("📜  영웅 & 몬스터 도감", "📜  HERO & MONSTER CODEX"), BtnStyle(24, texBtnDark, Color.white)))
             {
                 screen = GameScreen.Codex;
                 PlaySfx(SfxId.Pickup);
             }
-            if (GUI.Button(new Rect(85, 1056, 580, 76), "⚙️  게임 설정", BtnStyle(24, texBtnDark, Color.white)))
+            if (GUI.Button(new Rect(85, 1056, 580, 76), Loc("⚙️  게임 설정", "⚙️  SETTINGS"), BtnStyle(24, texBtnDark, Color.white)))
             {
                 screen = GameScreen.Settings;
                 PlaySfx(SfxId.Pickup);
@@ -1886,9 +2025,14 @@ namespace DungeonSlasher
             GUI.DrawTexture(new Rect(20, 48, 710, 128), texDarkPanel);
 
             // Floor & Wave & Squad Info
-            string waveStr = bossSpawned ? "BOSS 결전!" : ("WAVE " + waveIndex + "/3");
-            GUI.Label(new Rect(38, 56, 360, 34), "제 " + currentFloor + "층 · " + waveStr + "   영웅 " + heroes.Count + "/5", LabelStyle(20, Color.white, TextAnchor.MiddleLeft));
-            GUI.Label(new Rect(38, 92, 260, 30), "LV." + squadLevel + "   처치 " + kills + "   💰 " + runGold + "G", LabelStyle(18, new Color(1f, 0.86f, 0.35f), TextAnchor.MiddleLeft));
+            string waveStr = bossSpawned ? Loc("BOSS 결전!", "BOSS FIGHT!") : ("WAVE " + waveIndex + "/3");
+            GUI.Label(new Rect(38, 56, 360, 34),
+                Loc("제 " + currentFloor + "층 · " + waveStr + "   영웅 " + heroes.Count + "/5",
+                    "Floor " + currentFloor + " · " + waveStr + "   Heroes " + heroes.Count + "/5"),
+                LabelStyle(20, Color.white, TextAnchor.MiddleLeft));
+            GUI.Label(new Rect(38, 92, 260, 30),
+                "LV." + squadLevel + "   " + Loc("처치 ", "Kills ") + kills + "   💰 " + runGold + "G",
+                LabelStyle(18, new Color(1f, 0.86f, 0.35f), TextAnchor.MiddleLeft));
 
             // XP Progress Bar
             GUI.DrawTexture(new Rect(38, 134, 460, 22), texBarBg);
@@ -1897,17 +2041,17 @@ namespace DungeonSlasher
 
             // Smart Hybrid AUTO Toggle Button
             Texture2D autoTex = autoMode ? texBtnAutoOn : texBtnAutoOff;
-            string autoLabel = autoMode ? "🤖 AUTO ON" : "🕹️ 수동 조작";
+            string autoLabel = autoMode ? Loc("🤖 AUTO ON", "🤖 AUTO ON") : Loc("🕹️ 수동 조작", "🕹️ MANUAL");
             if (GUI.Button(new Rect(520, 62, 192, 56), autoLabel, BtnStyle(20, autoTex, Color.white)))
             {
                 autoMode = !autoMode;
                 PlaySfx(SfxId.Pickup);
                 if (heroes.Count > 0)
-                    AddFloatText(heroes[0].pos + Vector3.up * 1.8f, autoMode ? "자동 전투 ON" : "수동 조작 전환", Color.cyan, false);
+                    AddFloatText(heroes[0].pos + Vector3.up * 1.8f, autoMode ? Loc("자동 전투 ON", "AUTO RAID ON") : Loc("수동 조작 전환", "MANUAL CONTROL"), Color.cyan, false);
             }
 
-            // Pause / Lobby small button
-            if (GUI.Button(new Rect(520, 126, 192, 38), "🏠 로비 복귀", BtnStyle(16, texBtnDark, new Color(0.85f, 0.9f, 1f))))
+            // Pause / Lobby button
+            if (GUI.Button(new Rect(520, 126, 192, 38), Loc("🏠 로비 복귀", "🏠 LOBBY"), BtnStyle(16, texBtnDark, new Color(0.85f, 0.9f, 1f))))
             {
                 StartTitleDiorama();
             }
@@ -1920,20 +2064,24 @@ namespace DungeonSlasher
                 GUI.DrawTexture(new Rect(60, 192, 630, 52), texDarkPanel);
                 GUI.DrawTexture(new Rect(74, 218, 602, 18), texBarBg);
                 GUI.DrawTexture(new Rect(74, 218, 602 * Mathf.Clamp01(boss.hp / boss.maxHp), 18), texHpRed);
-                GUI.Label(new Rect(74, 193, 602, 26), "👹 " + boss.name + "  (" + Mathf.CeilToInt(boss.hp) + " / " + Mathf.CeilToInt(boss.maxHp) + ")", LabelStyle(16, new Color(1f, 0.72f, 0.72f)));
+                GUI.Label(new Rect(74, 194, 602, 24), Loc("👹 마왕 발록 HP: ", "👹 BALROG HP: ") + Mathf.CeilToInt(boss.hp) + " / " + Mathf.CeilToInt(boss.maxHp), LabelStyle(16, new Color(1f, 0.85f, 0.85f)));
             }
 
             // Bottom Squad HP Summary & Ultimate Button
             GUI.DrawTexture(new Rect(20, 1175, 500, 108), texDarkPanel);
             float hpPct = GetSquadHpRatio();
-            GUI.Label(new Rect(38, 1184, 464, 30), "원정대 총 체력  " + Mathf.RoundToInt(hpPct * 100f) + "%   |   모드: " + (draggingJoy ? "직접 이동 중" : (autoMode ? "자동 탐험" : "대기")), LabelStyle(18, Color.white, TextAnchor.MiddleLeft));
+            string modeStr = draggingJoy ? Loc("직접 이동 중", "Manual Drag") : (autoMode ? Loc("자동 탐험", "Auto Raid") : Loc("대기", "Standby"));
+            GUI.Label(new Rect(38, 1184, 464, 30),
+                Loc("원정대 총 체력  ", "Squad HP  ") + Mathf.RoundToInt(hpPct * 100f) + "%   |   " + Loc("모드: ", "Mode: ") + modeStr,
+                LabelStyle(18, Color.white, TextAnchor.MiddleLeft));
             GUI.DrawTexture(new Rect(38, 1222, 464, 26), texBarBg);
             GUI.DrawTexture(new Rect(38, 1222, 464 * hpPct, 26), texHpGreen);
-            GUI.Label(new Rect(38, 1254, 464, 24), "화면 아래를 드래그하면 즉시 수동 이동합니다", LabelStyle(14, new Color(0.72f, 0.80f, 0.92f), TextAnchor.MiddleLeft, false));
+            GUI.Label(new Rect(38, 1254, 464, 24), Loc("화면을 드래그하면 즉시 수동 이동합니다", "Drag anywhere to control squad movement"), LabelStyle(14, new Color(0.72f, 0.80f, 0.92f), TextAnchor.MiddleLeft, false));
 
             // Ultimate Button
-            bool ready = ultCharge >= 100f;
-            if (GUI.Button(new Rect(536, 1175, 194, 108), ready ? "⚡ 일제 돌격\n[발동!]" : ("⚡ 필살기\n" + Mathf.FloorToInt(ultCharge) + "%"), BtnStyle(20, ready ? texBtnGold : texBtnDark, ready ? Color.white : new Color(0.75f, 0.8f, 0.9f))))
+            bool ready = (ultCharge >= 100f);
+            string ultLabel = ready ? Loc("⚡ 일제 돌격\n[발동!]", "⚡ METEOR\n[READY!]") : (Loc("⚡ 필살기\n", "⚡ ULTIMATE\n") + Mathf.FloorToInt(ultCharge) + "%");
+            if (GUI.Button(new Rect(536, 1175, 194, 108), ultLabel, BtnStyle(20, ready ? texBtnGold : texBtnDark, ready ? Color.white : new Color(0.75f, 0.8f, 0.9f))))
             {
                 TriggerUltimate();
             }
@@ -1944,14 +2092,20 @@ namespace DungeonSlasher
                 GUI.DrawTexture(new Rect(joyOriginGui.x - 85f, joyOriginGui.y - 85f, 170f, 170f), texJoyRing);
                 GUI.DrawTexture(new Rect(joyCurrentGui.x - 42f, joyCurrentGui.y - 42f, 84f, 84f), texJoyKnob);
             }
+            else
+            {
+                // Semi-transparent idle joystick hint
+                GUI.DrawTexture(new Rect(180f - 65f, 1020f - 65f, 130f, 130f), texJoyRing);
+                GUI.DrawTexture(new Rect(180f - 28f, 1020f - 28f, 56f, 56f), texJoyKnob);
+            }
         }
 
         private void DrawLevelUpModal()
         {
             GUI.DrawTexture(new Rect(0, 0, 750, 1334), texDimOverlay);
             GUI.DrawTexture(new Rect(45, 190, 660, 920), texHeaderPanel);
-            GUI.Label(new Rect(60, 215, 630, 56), "✨ 원정대 레벨 업! (LV." + squadLevel + ")", LabelStyle(34, new Color(1f, 0.88f, 0.35f)));
-            GUI.Label(new Rect(60, 272, 630, 32), "원하는 스킬 1종을 선택하세요", LabelStyle(20, new Color(0.85f, 0.92f, 1f), TextAnchor.MiddleCenter, false));
+            GUI.Label(new Rect(60, 215, 630, 56), Loc("✨ 원정대 레벨 업! (LV." + squadLevel + ")", "✨ SQUAD LEVEL UP! (LV." + squadLevel + ")"), LabelStyle(34, new Color(1f, 0.88f, 0.35f)));
+            GUI.Label(new Rect(60, 272, 630, 32), Loc("원하는 스킬 1종을 선택하세요", "Choose 1 Skill Upgrade"), LabelStyle(20, new Color(0.85f, 0.92f, 1f), TextAnchor.MiddleCenter, false));
 
             for (int i = 0; i < 3; i++)
             {
@@ -1959,11 +2113,15 @@ namespace DungeonSlasher
                 if (of == null) continue;
                 float y = 335 + i * 245;
                 GUI.DrawTexture(new Rect(75, y, 600, 215), texCardBg);
-                GUI.Label(new Rect(100, y + 18, 550, 40), of.title, LabelStyle(28, of.accent, TextAnchor.MiddleLeft));
-                GUI.Label(new Rect(100, y + 60, 550, 30), "[" + of.badge + "]", LabelStyle(18, new Color(0.95f, 0.95f, 1f), TextAnchor.MiddleLeft));
-                GUI.Label(new Rect(100, y + 92, 550, 56), of.desc, LabelStyle(18, new Color(0.80f, 0.85f, 0.95f), TextAnchor.MiddleLeft, false));
+                string title = Loc(of.titleKr, of.titleEn);
+                string badge = Loc(of.badgeKr, of.badgeEn);
+                string desc = Loc(of.descKr, of.descEn);
 
-                if (GUI.Button(new Rect(445, y + 152, 210, 48), "선택하기", BtnStyle(20, texBtnGold, Color.white)))
+                GUI.Label(new Rect(100, y + 18, 550, 40), title, LabelStyle(28, of.accent, TextAnchor.MiddleLeft));
+                GUI.Label(new Rect(100, y + 60, 550, 30), "[" + badge + "]", LabelStyle(18, new Color(0.95f, 0.95f, 1f), TextAnchor.MiddleLeft));
+                GUI.Label(new Rect(100, y + 92, 550, 56), desc, LabelStyle(18, new Color(0.80f, 0.85f, 0.95f), TextAnchor.MiddleLeft, false));
+
+                if (GUI.Button(new Rect(445, y + 152, 210, 48), Loc("선택하기", "SELECT"), BtnStyle(20, texBtnGold, Color.white)))
                 {
                     ApplyUpgrade(of);
                 }
@@ -1972,25 +2130,25 @@ namespace DungeonSlasher
 
         private void DrawCodex()
         {
-            GUI.DrawTexture(new Rect(35, 70, 680, 1180), texDarkPanel);
-            GUI.Label(new Rect(55, 95, 640, 50), "📜 원정대 영웅 & 던전 도감", LabelStyle(32, new Color(1f, 0.88f, 0.35f)));
+            GUI.DrawTexture(new Rect(40, 80, 670, 1160), texDarkPanel);
+            GUI.Label(new Rect(50, 100, 650, 50), Loc("📜 영웅 및 몬스터 도감", "📜 HERO & MONSTER CODEX"), LabelStyle(34, Color.white));
 
             string[] entries = {
-                "🛡️ 기사 아서  |  근접 범위 검기 · 높은 체력으로 선봉 유지",
-                "🏹 궁수 레나  |  빠른 관통 화살 · 원거리 집중 사격",
-                "🔮 마법사 루나 |  감옥 구출 합류 · 광역 폭발 화염구",
-                "✨ 사제 세라  |  감옥 구출 합류 · 아군 전원 체력 치유",
-                "👾 몬스터군  |  슬라임·고블린·해골궁수·오크광전사",
-                "👹 마왕 발록  |  웨이브 3 보스 · 바닥 장판 예고 폭발 + 탄막"
+                Loc("🛡️ 기사 아서  |  근접 범위 검기 · 높은 체력으로 선봉 유지", "🛡️ Knight Arthur  |  Melee cleave slash · High HP vanguard tank"),
+                Loc("🏹 궁수 레나  |  빠른 관통 화살 · 원거리 집중 사격", "🏹 Archer Lena    |  Rapid piercing arrows · High ranged DPS"),
+                Loc("🔮 마법사 루나 |  감옥 구출 합류 · 광역 폭발 화염구", "🔮 Mage Luna      |  Rescued from cage · Giant AoE explosive fireball"),
+                Loc("✨ 사제 세라  |  감옥 구출 합류 · 아군 전원 체력 치유", "✨ Priestess Sera |  Rescued from cage · Holy aura heals all allies"),
+                Loc("👾 몬스터군  |  슬라임·고블린·해골궁수·오크광전사", "👾 Monsters       |  Slime, Goblin, Skeleton Archer, Orc Berserker"),
+                Loc("👹 마왕 발록  |  웨이브 3 보스 · 바닥 장판 예고 폭발 + 탄막", "👹 Lord Balrog    |  Wave 3 Boss · Telegraphed lava blast + fire barrage")
             };
             for (int i = 0; i < entries.Length; i++)
             {
                 float y = 175 + i * 135;
                 GUI.DrawTexture(new Rect(60, y, 630, 112), texCardBg);
-                GUI.Label(new Rect(85, y + 16, 580, 80), entries[i], LabelStyle(20, Color.white, TextAnchor.MiddleLeft));
+                GUI.Label(new Rect(85, y + 16, 580, 80), entries[i], LabelStyle(18, Color.white, TextAnchor.MiddleLeft));
             }
 
-            if (GUI.Button(new Rect(150, 1130, 450, 76), "⬅️  타이틀로 돌아가기", BtnStyle(24, texBtnGold, Color.white)))
+            if (GUI.Button(new Rect(150, 1130, 450, 76), Loc("⬅️  타이틀로 돌아가기", "⬅️  BACK TO MENU"), BtnStyle(24, texBtnGold, Color.white)))
             {
                 screen = GameScreen.Title;
             }
@@ -1998,24 +2156,42 @@ namespace DungeonSlasher
 
         private void DrawSettings()
         {
-            GUI.DrawTexture(new Rect(45, 180, 660, 860), texDarkPanel);
-            GUI.Label(new Rect(65, 215, 620, 54), "⚙️ 게임 환경 설정", LabelStyle(34, new Color(1f, 0.88f, 0.35f)));
+            GUI.DrawTexture(new Rect(60, 240, 630, 800), texDarkPanel);
+            GUI.Label(new Rect(80, 270, 590, 50), Loc("⚙️ 게임 환경 설정", "⚙️ GAME SETTINGS"), LabelStyle(34, Color.white));
 
-            if (GUI.Button(new Rect(95, 340, 560, 84), "효과음 (8비트 SFX): " + (sfxEnabled ? "켜짐 (ON)" : "꺼짐 (OFF)"), BtnStyle(22, sfxEnabled ? texBtnAutoOn : texBtnAutoOff, Color.white)))
+            // Language Toggle in Settings
+            string langStr = (curLang == GameLang.KR) ? "언어 (Language): 한국어 [KR]" : "Language: English [EN]";
+            if (GUI.Button(new Rect(95, 360, 560, 80), langStr, BtnStyle(22, texBtnDark, Color.yellow)))
+            {
+                curLang = (curLang == GameLang.KR) ? GameLang.EN : GameLang.KR;
+                PlayerPrefs.SetInt("GR_Language", (int)curLang);
+                PlayerPrefs.Save();
+                PlaySfx(SfxId.Pickup);
+            }
+
+            // SFX Toggle
+            string sfxStr = Loc("사운드 효과음: ", "Sound Effects: ") + (sfxEnabled ? Loc("켜짐 (ON)", "ON") : Loc("꺼짐 (OFF)", "OFF"));
+            if (GUI.Button(new Rect(95, 460, 560, 80), sfxStr, BtnStyle(22, sfxEnabled ? texBtnAutoOn : texBtnAutoOff, Color.white)))
             {
                 sfxEnabled = !sfxEnabled;
                 PlaySfx(SfxId.Pickup);
             }
-            if (GUI.Button(new Rect(95, 455, 560, 84), "대미지 숫자 표기: " + (showDmgText ? "켜짐 (ON)" : "꺼짐 (OFF)"), BtnStyle(22, showDmgText ? texBtnAutoOn : texBtnAutoOff, Color.white)))
+
+            // Damage Text Toggle
+            string dmgStr = Loc("대미지 숫자 표기: ", "Damage Numbers: ") + (showDmgText ? Loc("켜짐 (ON)", "ON") : Loc("꺼짐 (OFF)", "OFF"));
+            if (GUI.Button(new Rect(95, 560, 560, 80), dmgStr, BtnStyle(22, showDmgText ? texBtnAutoOn : texBtnAutoOff, Color.white)))
             {
                 showDmgText = !showDmgText;
             }
-            if (GUI.Button(new Rect(95, 570, 560, 84), "기본 자동 탐험(AUTO): " + (autoMode ? "켜짐 (ON)" : "꺼짐 (OFF)"), BtnStyle(22, autoMode ? texBtnAutoOn : texBtnAutoOff, Color.white)))
+
+            // Default AUTO Toggle
+            string defAutoStr = Loc("기본 자동 탐험(AUTO): ", "Default Auto Mode: ") + (autoMode ? Loc("켜짐 (ON)", "ON") : Loc("꺼짐 (OFF)", "OFF"));
+            if (GUI.Button(new Rect(95, 660, 560, 80), defAutoStr, BtnStyle(22, autoMode ? texBtnAutoOn : texBtnAutoOff, Color.white)))
             {
                 autoMode = !autoMode;
             }
 
-            if (GUI.Button(new Rect(150, 910, 450, 80), "⬅️  돌아가기", BtnStyle(24, texBtnGold, Color.white)))
+            if (GUI.Button(new Rect(150, 890, 450, 80), Loc("⬅️  설정 완료 및 복귀", "⬅️  SAVE & RETURN"), BtnStyle(24, texBtnGold, Color.white)))
             {
                 screen = GameScreen.Title;
             }
@@ -2025,27 +2201,32 @@ namespace DungeonSlasher
         {
             GUI.DrawTexture(new Rect(0, 0, 750, 1334), texDimOverlay);
             GUI.DrawTexture(new Rect(60, 320, 630, 620), texHeaderPanel);
-            GUI.Label(new Rect(80, 355, 590, 68), win ? "🏆 던전 토벌 성공!" : "💀 원정대 전멸...", LabelStyle(40, win ? new Color(1f, 0.86f, 0.30f) : new Color(1f, 0.35f, 0.35f)));
-            GUI.Label(new Rect(80, 455, 590, 150),
+            GUI.Label(new Rect(80, 355, 590, 68),
+                win ? Loc("🏆 레이드 토벌 성공!", "🏆 RAID CLEARED!") : Loc("💀 원정대 전멸...", "💀 SQUAD DEFEATED..."),
+                LabelStyle(42, win ? new Color(1f, 0.88f, 0.30f) : new Color(1f, 0.35f, 0.35f)));
+
+            string endSummary = Loc(
                 "도달 층수: 제 " + currentFloor + "층\n몬스터 처치: " + kills + "마리\n획득 골드: +" + (runGold + (win ? 150 : 0)) + " G",
-                LabelStyle(24, Color.white));
+                "Floor: " + currentFloor + "\nKills: " + kills + " monsters\nGold: +" + (runGold + (win ? 150 : 0)) + " G"
+            );
+            GUI.Label(new Rect(80, 455, 590, 150), endSummary, LabelStyle(24, Color.white));
 
             if (win)
             {
-                if (GUI.Button(new Rect(105, 650, 540, 84), "🔥 다음 층 출정 (제 " + (currentFloor + 1) + "층)", BtnStyle(24, texBtnGold, Color.white)))
+                if (GUI.Button(new Rect(105, 650, 540, 84), Loc("🔥 다음 층 출정 (제 " + (currentFloor + 1) + "층)", "🔥 NEXT RAID (Floor " + (currentFloor + 1) + ")"), BtnStyle(24, texBtnGold, Color.white)))
                 {
                     StartRun(currentFloor + 1);
                 }
             }
             else
             {
-                if (GUI.Button(new Rect(105, 650, 540, 84), "🔄 제 " + currentFloor + "층 다시 도전", BtnStyle(24, texBtnGold, Color.white)))
+                if (GUI.Button(new Rect(105, 650, 540, 84), Loc("🔄 제 " + currentFloor + "층 다시 도전", "🔄 RETRY FLOOR " + currentFloor), BtnStyle(24, texBtnGold, Color.white)))
                 {
                     StartRun(currentFloor);
                 }
             }
 
-            if (GUI.Button(new Rect(105, 760, 540, 72), "🏠 타이틀 로비로", BtnStyle(22, texBtnDark, Color.white)))
+            if (GUI.Button(new Rect(105, 760, 540, 72), Loc("🏠 타이틀 로비로", "🏠 MAIN MENU"), BtnStyle(22, texBtnDark, Color.white)))
             {
                 StartTitleDiorama();
             }
@@ -2055,50 +2236,48 @@ namespace DungeonSlasher
         {
             if (mainCam == null) return;
 
-            // Hero & Enemy & Cage mini HP bars
+            // Mini HP bars over heroes
             foreach (HeroMember h in heroes)
             {
-                DrawWorldBar(h.pos + Vector3.up * 1.35f, h.hp / h.maxHp, texHpGreen, 54f, rx, ry);
-            }
-            foreach (EnemyUnit e in enemies)
-            {
-                if (e.hp < e.maxHp)
-                    DrawWorldBar(e.pos + Vector3.up * (e.kind == EnemyKind.Boss ? 2.6f : 1.3f), e.hp / e.maxHp, texHpRed, e.kind == EnemyKind.Boss ? 96f : 50f, rx, ry);
-            }
-            foreach (DungeonProp p in props)
-            {
-                if (p.kind == PropKind.Cage)
+                Vector3 sp = mainCam.WorldToScreenPoint(h.pos + Vector3.up * 1.55f);
+                if (sp.z > 0)
                 {
-                    DrawWorldBar(p.pos + Vector3.up * 1.75f, p.hp / p.maxHp, texUltOrange, 64f, rx, ry);
-                    Vector3 sp = mainCam.WorldToScreenPoint(p.pos + Vector3.up * 2.15f);
-                    if (sp.z > 0f)
-                    {
-                        float gx = sp.x / rx;
-                        float gy = (Screen.height - sp.y) / ry;
-                        GUI.Label(new Rect(gx - 60f, gy - 16f, 120f, 32f), "구출!", LabelStyle(16, new Color(1f, 0.92f, 0.35f)));
-                    }
+                    float vx = sp.x / rx;
+                    float vy = (Screen.height - sp.y) / ry;
+                    float pct = Mathf.Clamp01(h.hp / h.maxHp);
+                    GUI.DrawTexture(new Rect(vx - 24, vy, 48, 6), texBarBg);
+                    GUI.DrawTexture(new Rect(vx - 24, vy, 48 * pct, 6), texHpGreen);
                 }
             }
 
-            // Floating Combat Texts
+            // Mini HP bars over props
+            foreach (DungeonProp p in props)
+            {
+                Vector3 sp = mainCam.WorldToScreenPoint(p.pos + Vector3.up * 1.55f);
+                if (sp.z > 0)
+                {
+                    float vx = sp.x / rx;
+                    float vy = (Screen.height - sp.y) / ry;
+                    float pct = Mathf.Clamp01(p.hp / p.maxHp);
+                    GUI.DrawTexture(new Rect(vx - 22, vy, 44, 5), texBarBg);
+                    GUI.DrawTexture(new Rect(vx - 22, vy, 44 * pct, 5), Color.yellow != null ? texUltOrange : texBarBg);
+                }
+            }
+
+            // Floating Combat Damage Numbers
             foreach (FloatingText ft in floatTexts)
             {
                 Vector3 sp = mainCam.WorldToScreenPoint(ft.worldPos);
-                if (sp.z <= 0f) continue;
-                float gx = sp.x / rx;
-                float gy = (Screen.height - sp.y) / ry;
-                GUI.Label(new Rect(gx - 180f, gy - 22f, 360f, 44f), ft.text, LabelStyle(ft.big ? 28 : 20, ft.color));
+                if (sp.z > 0)
+                {
+                    float vx = sp.x / rx;
+                    float vy = (Screen.height - sp.y) / ry;
+                    float alpha = Mathf.Clamp01(ft.timer / ft.maxTime);
+                    Color c = ft.color;
+                    c.a = alpha;
+                    GUI.Label(new Rect(vx - 120, vy - 15, 240, 30), ft.text, LabelStyle(ft.big ? 24 : 18, c, TextAnchor.MiddleCenter, ft.big));
+                }
             }
-        }
-
-        private void DrawWorldBar(Vector3 worldPos, float pct, Texture2D fillTex, float w, float rx, float ry)
-        {
-            Vector3 sp = mainCam.WorldToScreenPoint(worldPos);
-            if (sp.z <= 0f) return;
-            float gx = sp.x / rx;
-            float gy = (Screen.height - sp.y) / ry;
-            GUI.DrawTexture(new Rect(gx - w * 0.5f - 1f, gy - 1f, w + 2f, 9f), texBarBg);
-            GUI.DrawTexture(new Rect(gx - w * 0.5f, gy, w * Mathf.Clamp01(pct), 7f), fillTex);
         }
     }
 }
