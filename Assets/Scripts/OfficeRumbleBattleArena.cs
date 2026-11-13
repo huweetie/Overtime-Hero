@@ -29,6 +29,7 @@ namespace OfficeRumble
         EnemyBoss           // Weekend overtime demon
     }
 
+    [System.Serializable]
     public class BattleUnit
     {
         public GameObject go;
@@ -47,6 +48,7 @@ namespace OfficeRumble
         public Transform weaponTransform;
     }
 
+    [System.Serializable]
     public class TowerData
     {
         public string id;
@@ -61,6 +63,7 @@ namespace OfficeRumble
         public Renderer indicatorRenderer;
     }
 
+    [System.Serializable]
     public class PantryChestData
     {
         public int hp;
@@ -71,6 +74,7 @@ namespace OfficeRumble
         public GameObject go;
     }
 
+    [System.Serializable]
     public class FloatingText
     {
         public Vector3 worldPos;
@@ -977,7 +981,7 @@ namespace OfficeRumble
             else if (type == UnitType.EnemyDirector)
             {
                 // Red Rejection Stamp Hammer
-                CreateCube("RejectStamp", pos + new Vector3(0.40f, 0.90f, 0.30f), new Vector3(0.35f, 0.50f, 0.35f), matHpRed, charGo);
+                CreateCube("RejectStamp", pos + new Vector3(0.40f, 0.90f, 0.30f), new Vector3(0.35f, 0.50f, 0.35f), matHubEnemy, charGo);
             }
 
             return charGo;
