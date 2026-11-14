@@ -261,6 +261,19 @@ namespace DungeonSlasher
         private Vector2 joyCurrentGui = new Vector2(180f, 1080f);
         private Vector2 manualDir = Vector2.zero;
 
+        // Input backend guard: legacy Input calls throw when the project is set to
+        // "Input System Package (New)" only, so every legacy call is fenced off and
+        // falls back to the Input System backend instead of killing the frame.
+        private static bool? legacyInputAvailable = null;
+
+        // Uniform UI scaling (750x1334 design canvas, aspect preserved, vertically centered)
+        private float uiScale = 1f;
+        private Vector2 uiOffset = Vector2.zero;
+
+        // Synthesized SFX clips are cached instead of regenerated on every hit
+        private readonly Dictionary<SfxId, AudioClip> sfxCache = new Dictionary<SfxId, AudioClip>();
+        private int errorLogCount = 0;
+
         // World Containers
         private GameObject worldRoot;
         private GameObject entitiesRoot;
@@ -315,6 +328,8 @@ namespace DungeonSlasher
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 0;
             Time.timeScale = 1f;
+            Screen.sleepTimeout = SleepTimeout.NeverSleep;
+            ComputeUiTransform();
             curLang = PlayerPrefs.GetInt("GR_Language", 0) == 0 ? GameLang.KR : GameLang.EN;
             totalGold = PlayerPrefs.GetInt("GR_TotalGold", 0);
             bestFloor = PlayerPrefs.GetInt("GR_BestFloor", 1);
@@ -322,12 +337,27 @@ namespace DungeonSlasher
 
         private void Start()
         {
-            SetupCameraAndLight();
-            LoadResourcesAndShaders();
-            BuildUiTextures();
-            BuildAudio();
-            BuildDungeonArena();
-            StartTitleDiorama();
+            try
+            {
+                ComputeUiTransform();
+                SetupCameraAndLight();
+                LoadResourcesAndShaders();
+                BuildUiTextures();
+                BuildAudio();
+                BuildDungeonArena();
+                StartTitleDiorama();
+            }
+            catch (Exception ex)
+            {
+                LogOnce("[GoinRaid] Start failed: " + ex);
+            }
+        }
+
+        private void LogOnce(string msg)
+        {
+            if (errorLogCount >= 8) return;
+            errorLogCount++;
+            Debug.LogWarning(msg);
         }
 
         private void SetupCameraAndLight()
@@ -490,8 +520,22 @@ namespace DungeonSlasher
         private void PlaySfx(SfxId sfx)
         {
             if (!sfxEnabled || audioSrc == null) return;
-            AudioClip clip = CreateSynthSfx(sfx);
-            if (clip != null) audioSrc.PlayOneShot(clip, 0.72f);
+            try
+            {
+                AudioClip clip;
+                if (!sfxCache.TryGetValue(sfx, out clip) || clip == null)
+                {
+                    clip = CreateSynthSfx(sfx);
+                    if (clip == null) return;
+                    sfxCache[sfx] = clip;
+                }
+                audioSrc.PlayOneShot(clip, 0.72f);
+            }
+            catch (Exception ex)
+            {
+                sfxEnabled = false;
+                LogOnce("[GoinRaid] SFX disabled after error: " + ex.Message);
+            }
         }
 
         private AudioClip CreateSynthSfx(SfxId sfx)
@@ -926,6 +970,19 @@ namespace DungeonSlasher
 
         private void Update()
         {
+            // A single runtime exception must never freeze the whole game loop on device.
+            try
+            {
+                UpdateInternal();
+            }
+            catch (Exception ex)
+            {
+                LogOnce("[GoinRaid] Update error: " + ex);
+            }
+        }
+
+        private void UpdateInternal()
+        {
             float dt = Mathf.Min(Time.deltaTime, 0.05f);
 
             // Animate flickering torches
@@ -987,33 +1044,122 @@ namespace DungeonSlasher
             }
         }
 
+        private struct PointerState
+        {
+            public Vector2 pos;
+            public bool down;
+            public bool held;
+            public bool up;
+        }
+
+        private static bool LegacyInputUsable()
+        {
+            if (legacyInputAvailable.HasValue) return legacyInputAvailable.Value;
+            bool ok = true;
+            try
+            {
+                int tc = Input.touchCount;
+                Vector2 mp = Input.mousePosition;
+                ok = tc >= 0 && !float.IsNaN(mp.x) && !float.IsNaN(mp.y);
+            }
+            catch (Exception)
+            {
+                ok = false;
+            }
+            legacyInputAvailable = ok;
+            return ok;
+        }
+
+        private PointerState ReadPointer()
+        {
+            PointerState st = new PointerState();
+
+            if (LegacyInputUsable())
+            {
+                try
+                {
+                    if (Input.touchCount > 0)
+                    {
+                        Touch t = Input.GetTouch(0);
+                        st.pos = t.position;
+                        if (t.phase == TouchPhase.Began) st.down = true;
+                        else if (t.phase == TouchPhase.Moved || t.phase == TouchPhase.Stationary) st.held = true;
+                        else if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) st.up = true;
+                        return st;
+                    }
+                    st.pos = Input.mousePosition;
+                    st.down = Input.GetMouseButtonDown(0);
+                    st.held = !st.down && Input.GetMouseButton(0);
+                    st.up = !st.down && !st.held && Input.GetMouseButtonUp(0);
+                    return st;
+                }
+                catch (Exception)
+                {
+                    legacyInputAvailable = false;
+                }
+            }
+
+            return ReadPointerInputSystem();
+        }
+
+        private PointerState ReadPointerInputSystem()
+        {
+            PointerState st = new PointerState();
+#if ENABLE_INPUT_SYSTEM
+            try
+            {
+                UnityEngine.InputSystem.Touchscreen ts = UnityEngine.InputSystem.Touchscreen.current;
+                if (ts != null)
+                {
+                    UnityEngine.InputSystem.Controls.TouchControl touch = ts.primaryTouch;
+                    st.pos = touch.position.ReadValue();
+                    if (touch.press.wasPressedThisFrame) st.down = true;
+                    else if (touch.press.isPressed) st.held = true;
+                    else if (touch.press.wasReleasedThisFrame) st.up = true;
+                    return st;
+                }
+
+                UnityEngine.InputSystem.Mouse mouse = UnityEngine.InputSystem.Mouse.current;
+                if (mouse != null)
+                {
+                    st.pos = mouse.position.ReadValue();
+                    if (mouse.leftButton.wasPressedThisFrame) st.down = true;
+                    else if (mouse.leftButton.isPressed) st.held = true;
+                    else if (mouse.leftButton.wasReleasedThisFrame) st.up = true;
+                }
+            }
+            catch (Exception)
+            {
+            }
+#endif
+            return st;
+        }
+
+        private void ComputeUiTransform()
+        {
+            float w = Mathf.Max(1f, (float)Screen.width);
+            float h = Mathf.Max(1f, (float)Screen.height);
+            // Fit the 750x1334 design canvas inside any device resolution without distortion
+            // (iPhone 19.5:9 and iPad 4:3 both keep the full HUD on screen).
+            uiScale = Mathf.Min(w / 750f, h / 1334f);
+            if (uiScale < 0.0001f) uiScale = 1f;
+            uiOffset = new Vector2((w - 750f * uiScale) * 0.5f, (h - 1334f * uiScale) * 0.5f);
+        }
+
+        private Vector2 ScreenToDesign(Vector2 screenPos)
+        {
+            float s = uiScale > 0.0001f ? uiScale : 1f;
+            return new Vector2((screenPos.x - uiOffset.x) / s, (Screen.height - screenPos.y - uiOffset.y) / s);
+        }
+
         private void HandleTouchJoystick()
         {
-            float rx = Screen.width / 750f;
-            float ry = Screen.height / 1334f;
+            PointerState ptr = ReadPointer();
+            bool isDown = ptr.down;
+            bool isHeld = ptr.held;
+            bool isUp = ptr.up;
 
-            Vector2 screenPos = Vector2.zero;
-            bool isDown = false;
-            bool isHeld = false;
-            bool isUp = false;
-
-            if (Input.touchCount > 0)
-            {
-                Touch t = Input.GetTouch(0);
-                screenPos = t.position;
-                if (t.phase == TouchPhase.Began) isDown = true;
-                else if (t.phase == TouchPhase.Moved || t.phase == TouchPhase.Stationary) isHeld = true;
-                else if (t.phase == TouchPhase.Ended || t.phase == TouchPhase.Canceled) isUp = true;
-            }
-            else
-            {
-                screenPos = Input.mousePosition;
-                if (Input.GetMouseButtonDown(0)) isDown = true;
-                else if (Input.GetMouseButton(0)) isHeld = true;
-                else if (Input.GetMouseButtonUp(0)) isUp = true;
-            }
-
-            Vector2 gPos = new Vector2(screenPos.x / rx, (Screen.height - screenPos.y) / ry);
+            Vector2 gPos = ScreenToDesign(ptr.pos);
 
             // Exclude top HUD buttons and bottom Ultimate button
             bool inTopHud = gPos.y < 180f;
@@ -1927,22 +2073,31 @@ namespace DungeonSlasher
         // ================= GUI (750 x 1334 Portrait Virtual Canvas) =================
         private void OnGUI()
         {
-            if (uiFont != null) GUI.skin.font = uiFont;
-            float rx = Screen.width / 750f;
-            float ry = Screen.height / 1334f;
-            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(rx, ry, 1f));
-
-            switch (screen)
+            try
             {
-                case GameScreen.Title: DrawTitle(); break;
-                case GameScreen.Playing: DrawHud(); break;
-                case GameScreen.LevelUp: DrawHud(); DrawLevelUpModal(); break;
-                case GameScreen.Codex: DrawCodex(); break;
-                case GameScreen.Settings: DrawSettings(); break;
-                case GameScreen.Victory: DrawHud(); DrawEndModal(true); break;
-                case GameScreen.Defeat: DrawHud(); DrawEndModal(false); break;
+                if (texDarkPanel == null) BuildUiTextures();
+                ComputeUiTransform();
+                if (uiFont != null) GUI.skin.font = uiFont;
+                float s = uiScale > 0.0001f ? uiScale : 1f;
+                GUI.matrix = Matrix4x4.TRS(new Vector3(uiOffset.x, uiOffset.y, 0f), Quaternion.identity, new Vector3(s, s, 1f));
+
+                switch (screen)
+                {
+                    case GameScreen.Title: DrawTitle(); break;
+                    case GameScreen.Playing: DrawHud(); break;
+                    case GameScreen.LevelUp: DrawHud(); DrawLevelUpModal(); break;
+                    case GameScreen.Codex: DrawCodex(); break;
+                    case GameScreen.Settings: DrawSettings(); break;
+                    case GameScreen.Victory: DrawHud(); DrawEndModal(true); break;
+                    case GameScreen.Defeat: DrawHud(); DrawEndModal(false); break;
+                }
+                DrawWorldBarsAndTexts();
             }
-            DrawWorldBarsAndTexts(rx, ry);
+            catch (Exception ex)
+            {
+                GUI.matrix = Matrix4x4.identity;
+                LogOnce("[GoinRaid] OnGUI error: " + ex);
+            }
         }
 
         private GUIStyle LabelStyle(int size, Color col, TextAnchor align = TextAnchor.MiddleCenter, bool bold = true)
@@ -1991,7 +2146,7 @@ namespace DungeonSlasher
 
             GUI.DrawTexture(new Rect(40, 100, 670, 260), texHeaderPanel);
             GUI.Label(new Rect(55, 122, 640, 68), Loc("고잉레이드", "GOIN RAID"), LabelStyle(52, new Color(1f, 0.88f, 0.35f)));
-            GUI.Label(new Rect(55, 195, 640, 36), Loc("GOIN RAID · v0.2.0 원핸드 군집 슬래셔", "GOIN RAID · v0.2.0 Squad Action RPG"), LabelStyle(22, new Color(0.50f, 0.85f, 1f)));
+            GUI.Label(new Rect(55, 195, 640, 36), Loc("GOIN RAID · v0.3.0 원핸드 군집 슬래셔", "GOIN RAID · v0.3.0 Squad Action RPG"), LabelStyle(22, new Color(0.50f, 0.85f, 1f)));
             GUI.Label(new Rect(55, 240, 640, 82),
                 Loc("감옥의 동료를 구출해 5인 원정대를 꾸리고\n심연의 마왕 발록을 토벌하라! (한 손 조작 + AUTO)",
                     "Rescue captive allies, build a 5-hero squad\nand defeat Lord Balrog! (One-Hand + AUTO)"),
@@ -2232,7 +2387,7 @@ namespace DungeonSlasher
             }
         }
 
-        private void DrawWorldBarsAndTexts(float rx, float ry)
+        private void DrawWorldBarsAndTexts()
         {
             if (mainCam == null) return;
 
@@ -2242,8 +2397,9 @@ namespace DungeonSlasher
                 Vector3 sp = mainCam.WorldToScreenPoint(h.pos + Vector3.up * 1.55f);
                 if (sp.z > 0)
                 {
-                    float vx = sp.x / rx;
-                    float vy = (Screen.height - sp.y) / ry;
+                    Vector2 dp = ScreenToDesign(new Vector2(sp.x, sp.y));
+                    float vx = dp.x;
+                    float vy = dp.y;
                     float pct = Mathf.Clamp01(h.hp / h.maxHp);
                     GUI.DrawTexture(new Rect(vx - 24, vy, 48, 6), texBarBg);
                     GUI.DrawTexture(new Rect(vx - 24, vy, 48 * pct, 6), texHpGreen);
@@ -2256,11 +2412,12 @@ namespace DungeonSlasher
                 Vector3 sp = mainCam.WorldToScreenPoint(p.pos + Vector3.up * 1.55f);
                 if (sp.z > 0)
                 {
-                    float vx = sp.x / rx;
-                    float vy = (Screen.height - sp.y) / ry;
+                    Vector2 dp = ScreenToDesign(new Vector2(sp.x, sp.y));
+                    float vx = dp.x;
+                    float vy = dp.y;
                     float pct = Mathf.Clamp01(p.hp / p.maxHp);
                     GUI.DrawTexture(new Rect(vx - 22, vy, 44, 5), texBarBg);
-                    GUI.DrawTexture(new Rect(vx - 22, vy, 44 * pct, 5), Color.yellow != null ? texUltOrange : texBarBg);
+                    GUI.DrawTexture(new Rect(vx - 22, vy, 44 * pct, 5), texUltOrange);
                 }
             }
 
@@ -2270,8 +2427,9 @@ namespace DungeonSlasher
                 Vector3 sp = mainCam.WorldToScreenPoint(ft.worldPos);
                 if (sp.z > 0)
                 {
-                    float vx = sp.x / rx;
-                    float vy = (Screen.height - sp.y) / ry;
+                    Vector2 dp = ScreenToDesign(new Vector2(sp.x, sp.y));
+                    float vx = dp.x;
+                    float vy = dp.y;
                     float alpha = Mathf.Clamp01(ft.timer / ft.maxTime);
                     Color c = ft.color;
                     c.a = alpha;

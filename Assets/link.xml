@@ -1,0 +1,5 @@
+<linker>
+  <!-- Goin Raid runtime bootstrap is invoked via RuntimeInitializeOnLoadMethod only,
+       so keep the whole gameplay assembly alive through IL2CPP managed stripping. -->
+  <assembly fullname="Assembly-CSharp" preserve="all"/>
+</linker>
